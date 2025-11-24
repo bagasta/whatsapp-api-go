@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/agent"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/session"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/websocket"
 	"github.com/dustin/go-humanize"
 	"github.com/gofiber/fiber/v2"
@@ -95,7 +98,7 @@ func restServer(_ *cobra.Command, _ []string) {
 		apiGroup = app.Group(config.AppBasePath)
 	}
 
-	// Rest
+	// Rest - Existing routes
 	rest.InitRestApp(apiGroup, appUsecase)
 	rest.InitRestChat(apiGroup, chatUsecase)
 	rest.InitRestSend(apiGroup, sendUsecase)
@@ -103,6 +106,10 @@ func restServer(_ *cobra.Command, _ []string) {
 	rest.InitRestMessage(apiGroup, messageUsecase)
 	rest.InitRestGroup(apiGroup, groupUsecase)
 	rest.InitRestNewsletter(apiGroup, newsletterUsecase)
+
+	// New API-OLD compatible routes
+	session.InitRoutes(apiGroup, sessionUsecase)
+	agent.InitRoutes(apiGroup, agentUsecase)
 
 	apiGroup.Get("/", func(c *fiber.Ctx) error {
 		return c.Render("views/index", fiber.Map{
@@ -113,6 +120,20 @@ func restServer(_ *cobra.Command, _ []string) {
 			"MaxFileSize":    humanize.Bytes(uint64(config.WhatsappSettingMaxFileSize)),
 			"MaxVideoSize":   humanize.Bytes(uint64(config.WhatsappSettingMaxVideoSize)),
 		})
+	})
+
+	// Health and Metrics endpoints (API-OLD compatible)
+	apiGroup.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":    "ok",
+			"uptime":    time.Since(time.Now().Add(-time.Hour)).Seconds(), // Placeholder
+			"timestamp": time.Now().Unix(),
+		})
+	})
+
+	apiGroup.Get("/metrics", func(c *fiber.Ctx) error {
+		// TODO: Implement Prometheus metrics
+		return c.SendString("# Prometheus metrics placeholder\n")
 	})
 
 	websocket.RegisterRoutes(apiGroup, appUsecase)

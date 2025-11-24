@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"os"
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow/store/sqlstore"
+
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	domainAgent "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/agent"
 	domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
 	domainChat "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chat"
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
@@ -18,8 +20,11 @@ import (
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
+	domainSession "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/database"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/repository"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
@@ -36,11 +41,16 @@ var (
 	EmbedViews embed.FS
 
 	// Whatsapp
-	whatsappCli *whatsmeow.Client
+	whatsappCli   *whatsmeow.Client
+	clientManager *whatsapp.ClientManager
 
 	// Chat Storage
 	chatStorageDB   *sql.DB
 	chatStorageRepo domainChatStorage.IChatStorageRepository
+
+	// Repositories
+	sessionRepo repository.SessionRepository
+	apiKeyRepo  repository.ApiKeyRepository
 
 	// Usecase
 	appUsecase        domainApp.IAppUsecase
@@ -50,6 +60,8 @@ var (
 	messageUsecase    domainMessage.IMessageUsecase
 	groupUsecase      domainGroup.IGroupUsecase
 	newsletterUsecase domainNewsletter.INewsletterUsecase
+	sessionUsecase    domainSession.ISessionUsecase
+	agentUsecase      domainAgent.IAgentUsecase
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -126,6 +138,10 @@ func initEnvConfig() {
 	}
 	if viper.IsSet("whatsapp_account_validation") {
 		config.WhatsappAccountValidation = viper.GetBool("whatsapp_account_validation")
+	}
+
+	if envAiBackend := viper.GetString("ai_backend_url"); envAiBackend != "" {
+		config.AiBackendURL = envAiBackend
 	}
 }
 
@@ -223,12 +239,21 @@ func initFlags() {
 }
 
 func initChatStorage() (*sql.DB, error) {
-	connStr := fmt.Sprintf("%s?_journal_mode=WAL", config.ChatStorageURI)
-	if config.ChatStorageEnableForeignKeys {
-		connStr += "&_foreign_keys=on"
+	var driverName string
+	var connStr string
+
+	if strings.HasPrefix(config.ChatStorageURI, "postgres://") || strings.HasPrefix(config.ChatStorageURI, "postgresql://") {
+		driverName = "postgres"
+		connStr = config.ChatStorageURI
+	} else {
+		driverName = "sqlite3"
+		connStr = fmt.Sprintf("%s?_journal_mode=WAL", config.ChatStorageURI)
+		if config.ChatStorageEnableForeignKeys {
+			connStr += "&_foreign_keys=on"
+		}
 	}
 
-	db, err := sql.Open("sqlite3", connStr)
+	db, err := sql.Open(driverName, connStr)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +266,12 @@ func initChatStorage() (*sql.DB, error) {
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Run migrations
+	if err := database.Migrate(db, driverName); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	return db, nil
@@ -277,6 +308,13 @@ func initApp() {
 
 	whatsappCli = whatsapp.InitWaCLI(ctx, whatsappDB, keysDB, chatStorageRepo)
 
+	// Initialize ClientManager for multi-agent support
+	clientManager = whatsapp.NewClientManager(chatStorageRepo)
+
+	// Initialize repositories
+	sessionRepo = *repository.NewSessionRepository(chatStorageDB).(*repository.SessionRepository)
+	apiKeyRepo = *repository.NewApiKeyRepository(chatStorageDB).(*repository.ApiKeyRepository)
+
 	// Usecase
 	appUsecase = usecase.NewAppService(chatStorageRepo)
 	chatUsecase = usecase.NewChatService(chatStorageRepo)
@@ -285,6 +323,8 @@ func initApp() {
 	messageUsecase = usecase.NewMessageService(chatStorageRepo)
 	groupUsecase = usecase.NewGroupService()
 	newsletterUsecase = usecase.NewNewsletterService()
+	sessionUsecase = domainSession.NewSessionUsecase(&sessionRepo, &apiKeyRepo, clientManager)
+	agentUsecase = domainAgent.NewAgentUsecase(&sessionRepo, &apiKeyRepo, clientManager)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

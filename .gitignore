@@ -1,14 +1,40 @@
-*.db
-tmp
-.idea
-.DS_Store
-history-*.json
+# Go build artifacts
+bin/
+tmp/
 main
 main.exe
-*.jpe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+*.pprof
+*.cover
+*.coverprofile
+coverage*
+*.log
+
+# Generated assets & data
 src/pkged.go
 storages
+*.db
+*.jpe
+history-*.json
+
+# Local environment
 .env
-bin
+.env.*
+*.env
+
+# Editor & tooling
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
 .playwright-mcp
 .cursor/mcp.json

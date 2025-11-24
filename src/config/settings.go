@@ -42,4 +42,6 @@ var (
 	ChatStorageURI               = "file:storages/chatstorage.db"
 	ChatStorageEnableForeignKeys = true
 	ChatStorageEnableWAL         = true
+
+	AiBackendURL = "http://localhost:5000"
 )
