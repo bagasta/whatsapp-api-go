@@ -74,3 +74,27 @@ func (r *SessionRepository) Delete(userID, agentID string) error {
 	_, err := r.db.Exec(query, userID, agentID)
 	return err
 }
+
+// FindByAgentID returns the first matching record for a given agentID. API-OLD path only carried agentId.
+func (r *SessionRepository) FindByAgentID(agentID string) (*session.WhatsappUser, error) {
+	query := `SELECT user_id, agent_id, agent_name, api_key, endpoint_url_run, status, last_connected_at, last_disconnected_at, created_at, updated_at FROM whatsapp_user WHERE agent_id = $1 LIMIT 1`
+	row := r.db.QueryRow(query, agentID)
+
+	var user session.WhatsappUser
+	err := row.Scan(
+		&user.UserID,
+		&user.AgentID,
+		&user.AgentName,
+		&user.ApiKey,
+		&user.EndpointUrlRun,
+		&user.Status,
+		&user.LastConnectedAt,
+		&user.LastDisconnectedAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}

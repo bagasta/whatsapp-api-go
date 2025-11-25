@@ -1,8 +1,11 @@
 package session
 
 import (
+	"encoding/json"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	"github.com/gofiber/fiber/v2"
+	"io"
+	"strings"
 )
 
 type Handler struct {
@@ -17,10 +20,38 @@ func NewHandler(usecase session.ISessionUsecase) *Handler {
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
 	var req session.CreateSessionRequest
 	if err := c.BodyParser(&req); err != nil {
+		if err != io.EOF { // allow empty body to be validated below
+			// Try to provide clearer parse error
+			return c.Status(400).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    "INVALID_PAYLOAD",
+					"message": "Invalid request body: " + err.Error(),
+				},
+			})
+		}
+	}
+
+	// fallback: if BodyParser failed to decode but raw body exists, attempt manual unmarshal for clearer error
+	if req.UserID == "" && req.AgentID == "" && len(c.Body()) > 0 {
+		var alt session.CreateSessionRequest
+		if err := json.Unmarshal(c.Body(), &alt); err == nil {
+			req = alt
+		} else {
+			return c.Status(400).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    "INVALID_PAYLOAD",
+					"message": "Cannot parse JSON: " + err.Error(),
+				},
+			})
+		}
+	}
+
+	// basic validation
+	if strings.TrimSpace(req.UserID) == "" || strings.TrimSpace(req.AgentID) == "" || strings.TrimSpace(req.AgentName) == "" {
 		return c.Status(400).JSON(fiber.Map{
 			"error": fiber.Map{
 				"code":    "INVALID_PAYLOAD",
-				"message": "Invalid request body",
+				"message": "userId, agentId, agentName are required",
 			},
 		})
 	}

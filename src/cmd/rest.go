@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/agent"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
@@ -87,9 +88,21 @@ func restServer(_ *cobra.Command, _ []string) {
 			account[ba[0]] = ba[1]
 		}
 
-		app.Use(basicauth.New(basicauth.Config{
-			Users: account,
-		}))
+		protected := basicauth.New(basicauth.Config{Users: account})
+
+		app.Use(func(c *fiber.Ctx) error {
+			path := c.Path()
+			// Bypass basic auth for docs, openapi, health/metrics, and API-OLD compatibility routes (sessions/agents)
+			if strings.HasPrefix(path, config.AppBasePath+"/docs") ||
+				strings.HasPrefix(path, config.AppBasePath+"/swagger") ||
+				strings.HasPrefix(path, config.AppBasePath+"/health") ||
+				strings.HasPrefix(path, config.AppBasePath+"/metrics") ||
+				strings.HasPrefix(path, config.AppBasePath+"/sessions") ||
+				strings.HasPrefix(path, config.AppBasePath+"/agents") {
+				return c.Next()
+			}
+			return protected(c)
+		})
 	}
 
 	// Create base path group or use app directly
@@ -106,6 +119,9 @@ func restServer(_ *cobra.Command, _ []string) {
 	rest.InitRestMessage(apiGroup, messageUsecase)
 	rest.InitRestGroup(apiGroup, groupUsecase)
 	rest.InitRestNewsletter(apiGroup, newsletterUsecase)
+
+	// Swagger UI for API documentation
+	rest.InitSwagger(apiGroup)
 
 	// New API-OLD compatible routes
 	session.InitRoutes(apiGroup, sessionUsecase)
@@ -124,16 +140,20 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	// Health and Metrics endpoints (API-OLD compatible)
 	apiGroup.Get("/health", func(c *fiber.Ctx) error {
+		sent, recv, sess, up := metrics.Snapshot()
 		return c.JSON(fiber.Map{
 			"status":    "ok",
-			"uptime":    time.Since(time.Now().Add(-time.Hour)).Seconds(), // Placeholder
+			"uptime":    up,
 			"timestamp": time.Now().Unix(),
+			"messages":  fiber.Map{"sent": sent, "received": recv},
+			"sessions":  sess,
+			"traceId":   fmt.Sprintf("rest-%d", time.Now().UnixNano()),
 		})
 	})
 
 	apiGroup.Get("/metrics", func(c *fiber.Ctx) error {
-		// TODO: Implement Prometheus metrics
-		return c.SendString("# Prometheus metrics placeholder\n")
+		c.Set(fiber.HeaderContentType, "text/plain; version=0.0.4")
+		return c.SendString(metrics.PrometheusText())
 	})
 
 	websocket.RegisterRoutes(apiGroup, appUsecase)

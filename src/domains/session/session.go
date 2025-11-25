@@ -54,6 +54,7 @@ type GetQRResponse struct {
 type ISessionRepository interface {
 	Upsert(user *WhatsappUser) error
 	FindOne(userID, agentID string) (*WhatsappUser, error)
+	FindByAgentID(agentID string) (*WhatsappUser, error)
 	Delete(userID, agentID string) error
 }
 

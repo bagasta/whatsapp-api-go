@@ -2,11 +2,15 @@ package session
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"errors"
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
+	"github.com/skip2/go-qrcode"
 )
 
 type SessionUsecase struct {
@@ -46,7 +50,9 @@ func (u *SessionUsecase) CreateSession(request CreateSessionRequest) (*CreateSes
 
 	// Check if exists to preserve some fields if needed, or just upsert
 	existing, err := u.sessionRepo.FindOne(request.UserID, request.AgentID)
+	newSession := true
 	if err == nil && existing != nil {
+		newSession = false
 		user.CreatedAt = existing.CreatedAt
 		if user.EndpointUrlRun == "" {
 			user.EndpointUrlRun = existing.EndpointUrlRun
@@ -80,13 +86,12 @@ func (u *SessionUsecase) CreateSession(request CreateSessionRequest) (*CreateSes
 			select {
 			case evt := <-qrChan:
 				if evt.Event == "code" {
-					qrData = &QrData{
-						ContentType: "image/png", // You might need to generate the image or just return the code
-						Base64:      evt.Code,    // For now returning the code string, frontend might need to generate QR
-					}
-					// Update status
+					png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+					encoded := base64.StdEncoding.EncodeToString(png)
+					qrData = &QrData{ContentType: "image/png", Base64: encoded}
 					user.Status = "awaiting_qr"
 					u.sessionRepo.Upsert(user)
+					u.clientManager.CacheQR(request.AgentID, qrData.ContentType, qrData.Base64)
 				}
 			case <-time.After(5 * time.Second):
 				// Timeout waiting for QR
@@ -106,6 +111,10 @@ func (u *SessionUsecase) CreateSession(request CreateSessionRequest) (*CreateSes
 	}
 	if isReady {
 		sessionState = "authenticated"
+	}
+
+	if newSession {
+		metrics.AddSessions(1)
 	}
 
 	return &CreateSessionResponse{
@@ -137,31 +146,43 @@ func (u *SessionUsecase) GetSession(agentID string) (*GetSessionResponse, error)
 		IsReady:      isReady,
 		HasClient:    hasClient,
 		SessionState: sessionState,
+		Qr:           u.getCachedQR(agentID),
 	}, nil
 }
 
 func (u *SessionUsecase) DeleteSession(agentID string) error {
-	// Destroy client
+	user, err := u.sessionRepo.FindByAgentID(agentID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
 	u.clientManager.DeleteClient(agentID)
 
-	// We need userID to delete from DB properly if PK is (userID, agentID)
-	// But the interface only asks for agentID.
-	// Assuming agentID is unique enough or we need to change the interface to accept userID.
-	// For now, let's assume we can find it or delete by agentID if possible.
-	// But the repo Delete takes (userID, agentID).
-	// We might need to FindOne first by just AgentID?
-	// Or the API request should provide UserID.
-	// The API-OLD.MD says `DELETE /sessions/{agentId}`. It doesn't mention UserID in the path.
-	// Maybe we assume the user is authenticated and we know the UserID?
-	// Or we delete all sessions with that AgentID (should be unique per user?).
+	if user != nil {
+		_ = u.sessionRepo.Delete(user.UserID, agentID)
+		metrics.AddSessions(-1)
+	}
 
-	// Let's leave the DB deletion for now or implement a DeleteByAgentID in repo.
 	return nil
 }
 
 func (u *SessionUsecase) ReconnectSession(agentID string) (*CreateSessionResponse, error) {
-	// Implementation similar to CreateSession but forces a reconnect
-	return nil, nil
+	user, err := u.sessionRepo.FindByAgentID(agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Destroy old client and recreate
+	u.clientManager.DeleteClient(agentID)
+
+	req := CreateSessionRequest{
+		UserID:    user.UserID,
+		AgentID:   user.AgentID,
+		AgentName: user.AgentName,
+		ApiKey:    user.ApiKey,
+	}
+
+	return u.CreateSession(req)
 }
 
 func (u *SessionUsecase) GetQR(agentID string) (*GetQRResponse, error) {
@@ -174,7 +195,38 @@ func (u *SessionUsecase) GetQR(agentID string) (*GetQRResponse, error) {
 		return nil, errors.New("session already logged in")
 	}
 
-	// This is tricky with whatsmeow as QR is emitted via channel.
-	// We might need to cache the last QR in ClientManager.
-	return nil, nil
+	if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
+		return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
+	}
+
+	ctx := context.Background()
+	qrChan, err := client.GetQRChannel(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.IsConnected() {
+		_ = client.Connect()
+	}
+
+	select {
+	case evt := <-qrChan:
+		if evt.Event != "code" {
+			return nil, errors.New("qr not available")
+		}
+		png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+		encoded := base64.StdEncoding.EncodeToString(png)
+		qr := QrData{ContentType: "image/png", Base64: encoded}
+		u.clientManager.CacheQR(agentID, qr.ContentType, qr.Base64)
+		return &GetQRResponse{Qr: qr, QrUpdatedAt: time.Now()}, nil
+	case <-time.After(60 * time.Second):
+		return nil, errors.New("qr timeout")
+	}
+}
+
+func (u *SessionUsecase) getCachedQR(agentID string) *QrData {
+	if ct, b64, ok, _ := u.clientManager.GetCachedQR(agentID); ok {
+		return &QrData{ContentType: ct, Base64: b64}
+	}
+	return nil
 }

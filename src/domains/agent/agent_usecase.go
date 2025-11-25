@@ -9,18 +9,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -29,6 +34,14 @@ type AgentUsecase struct {
 	apiKeyRepo    apikey.IApiKeyRepository
 	clientManager *whatsapp.ClientManager
 	httpClient    *http.Client
+
+	limiterMu sync.Mutex
+	limiters  map[string]*agentLimiter
+}
+
+type agentLimiter struct {
+	limiter *rate.Limiter
+	queue   chan struct{}
 }
 
 func NewAgentUsecase(sessionRepo session.ISessionRepository, apiKeyRepo apikey.IApiKeyRepository, clientManager *whatsapp.ClientManager) IAgentUsecase {
@@ -39,18 +52,22 @@ func NewAgentUsecase(sessionRepo session.ISessionRepository, apiKeyRepo apikey.I
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
+		limiters: make(map[string]*agentLimiter),
 	}
 }
 
 func (u *AgentUsecase) ExecuteRun(agentID, apiKey string, request RunRequest) (*RunResponse, error) {
 	traceID := uuid.New().String()
+	ctx := context.Background()
 
-	// 1. Validate API Key & Get User
-	keyData, err := u.apiKeyRepo.FindByToken(apiKey)
-	if err != nil {
-		return nil, errors.New("UNAUTHORIZED")
+	if err := u.acquire(agentID, ctx); err != nil {
+		return nil, err
 	}
-	userID := keyData.UserID
+
+	userID, err := u.validateAPIKey(agentID, apiKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. Get session info
 	sessionData, err := u.sessionRepo.FindOne(userID, agentID)
@@ -129,6 +146,12 @@ func (u *AgentUsecase) SendMessage(agentID, apiKey string, request SendMessageRe
 	if request.To == "" || request.Message == "" {
 		return nil, errors.New("to and message are required")
 	}
+	if err := u.acquire(agentID, context.Background()); err != nil {
+		return nil, err
+	}
+	if _, err := u.validateAPIKey(agentID, apiKey); err != nil {
+		return nil, err
+	}
 
 	// Get client
 	client := u.clientManager.GetClient(agentID)
@@ -155,6 +178,12 @@ func (u *AgentUsecase) SendMedia(agentID, apiKey string, request SendMediaReques
 	if request.Data == "" && request.URL == "" {
 		return nil, errors.New("data or url is required")
 	}
+	if err := u.acquire(agentID, context.Background()); err != nil {
+		return nil, err
+	}
+	if _, err := u.validateAPIKey(agentID, apiKey); err != nil {
+		return nil, err
+	}
 
 	// Get client
 	client := u.clientManager.GetClient(agentID)
@@ -162,26 +191,40 @@ func (u *AgentUsecase) SendMedia(agentID, apiKey string, request SendMediaReques
 		return nil, errors.New("SESSION_NOT_READY")
 	}
 
+	const maxMediaSize = 10 * 1024 * 1024 // 10MB
+
 	// Prepare media data
 	var mediaData []byte
 	var err error
 
 	if request.Data != "" {
-		// Decode base64
 		mediaData, err = base64.StdEncoding.DecodeString(request.Data)
 		if err != nil {
 			return nil, fmt.Errorf("invalid base64 data: %w", err)
 		}
+		if len(mediaData) > maxMediaSize {
+			return nil, errors.New("MEDIA_TOO_LARGE")
+		}
 	} else if request.URL != "" {
-		// Download from URL
+		// HEAD to check size when possible
+		if resp, err := http.Head(request.URL); err == nil {
+			if resp.ContentLength > 0 && resp.ContentLength > maxMediaSize {
+				return nil, errors.New("MEDIA_TOO_LARGE")
+			}
+		}
 		resp, err := http.Get(request.URL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download media: %w", err)
 		}
 		defer resp.Body.Close()
-		mediaData, err = io.ReadAll(resp.Body)
+
+		limited := &io.LimitedReader{R: resp.Body, N: maxMediaSize + 1}
+		mediaData, err = io.ReadAll(limited)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read media body: %w", err)
+		}
+		if int64(len(mediaData)) > maxMediaSize {
+			return nil, errors.New("MEDIA_TOO_LARGE")
 		}
 	}
 
@@ -264,6 +307,19 @@ func (u *AgentUsecase) SendMedia(agentID, apiKey string, request SendMediaReques
 		}
 	}
 
+	// Save preview for images (compat with API-OLD)
+	previewPath := ""
+	if strings.HasPrefix(mimeType, "image/") {
+		uuidName := uuid.New().String()
+		ext := filepath.Ext(request.Filename)
+		if ext == "" {
+			ext = ".jpg"
+		}
+		previewPath = filepath.Join(config.PathSendItems, "preview-"+uuidName+ext)
+		_ = os.MkdirAll(config.PathSendItems, 0755)
+		_ = os.WriteFile(previewPath, mediaData, 0644)
+	}
+
 	// Send message
 	jid := normalizeJID(request.To)
 	recipient, err := types.ParseJID(jid)
@@ -276,7 +332,9 @@ func (u *AgentUsecase) SendMedia(agentID, apiKey string, request SendMediaReques
 		return nil, fmt.Errorf("failed to send message: %w", err)
 	}
 
-	return &SendMediaResponse{Delivered: true}, nil
+	metrics.IncMessagesSent()
+
+	return &SendMediaResponse{Delivered: true, PreviewPath: previewPath}, nil
 }
 
 // Helper functions
@@ -328,7 +386,34 @@ func (u *AgentUsecase) sendText(client *whatsmeow.Client, jid, text string) erro
 	}
 
 	_, err = client.SendMessage(context.Background(), recipient, msg)
+	if err == nil {
+		metrics.IncMessagesSent()
+	}
 	return err
+}
+
+func (u *AgentUsecase) acquire(agentID string, ctx context.Context) error {
+	u.limiterMu.Lock()
+	lim, ok := u.limiters[agentID]
+	if !ok {
+		lim = &agentLimiter{
+			limiter: rate.NewLimiter(rate.Every(time.Minute/100), 100),
+			queue:   make(chan struct{}, 500),
+		}
+		u.limiters[agentID] = lim
+	}
+	u.limiterMu.Unlock()
+
+	select {
+	case lim.queue <- struct{}{}:
+		defer func() { <-lim.queue }()
+		if err := lim.limiter.Wait(ctx); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.New("RATE_LIMITED")
+	}
 }
 
 func normalizeJID(input string) string {
@@ -346,4 +431,44 @@ func normalizeJID(input string) string {
 
 func getAIBackendURL() string {
 	return config.AiBackendURL
+}
+
+// validateAPIKey mimics API-OLD behavior:
+// 1) accept token found in api_keys (active)
+// 2) accept token that matches session.ApiKey saved at /sessions creation
+// 3) else unauthorized
+func (u *AgentUsecase) validateAPIKey(agentID, token string) (string, error) {
+	if token == "" {
+		return "", errors.New("UNAUTHORIZED")
+	}
+
+	if key, err := u.apiKeyRepo.FindByToken(token); err == nil && key != nil {
+		return key.UserID, nil
+	}
+
+	sessionData, err := u.sessionRepo.FindByAgentID(agentID)
+	if err != nil || sessionData == nil {
+		return "", errors.New("UNAUTHORIZED")
+	}
+
+	// If session has no apiKey yet, adopt incoming token
+	if sessionData.ApiKey == "" {
+		sessionData.ApiKey = token
+		_ = u.sessionRepo.Upsert(sessionData)
+		return sessionData.UserID, nil
+	}
+
+	// Match stored apiKey
+	if sessionData.ApiKey == token {
+		return sessionData.UserID, nil
+	}
+
+	// Accept latest active key in api_keys table
+	if active, err := u.apiKeyRepo.FindActive(sessionData.UserID); err == nil && active != nil {
+		if active.AccessToken == token {
+			return sessionData.UserID, nil
+		}
+	}
+
+	return "", errors.New("UNAUTHORIZED")
 }

@@ -19,6 +19,7 @@ import (
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
@@ -50,6 +51,8 @@ func (service serviceSend) wrapSendMessage(ctx context.Context, recipient types.
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
+
+	metrics.IncMessagesSent()
 
 	// Store the sent message using chatstorage
 	senderJID := ""

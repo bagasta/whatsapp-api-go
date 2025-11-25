@@ -3,7 +3,10 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
@@ -18,6 +21,14 @@ type ClientManager struct {
 	dbs         map[string]*sqlstore.Container
 	mu          sync.RWMutex
 	chatStorage domainChatStorage.IChatStorageRepository
+
+	qrCache map[string]cachedQR
+}
+
+type cachedQR struct {
+	contentType string
+	base64      string
+	updatedAt   int64 // unix seconds
 }
 
 func NewClientManager(chatStorage domainChatStorage.IChatStorageRepository) *ClientManager {
@@ -25,6 +36,7 @@ func NewClientManager(chatStorage domainChatStorage.IChatStorageRepository) *Cli
 		clients:     make(map[string]*whatsmeow.Client),
 		dbs:         make(map[string]*sqlstore.Container),
 		chatStorage: chatStorage,
+		qrCache:     make(map[string]cachedQR),
 	}
 }
 
@@ -150,9 +162,34 @@ func (cm *ClientManager) DeleteClient(agentID string) error {
 	}
 
 	// Remove DB file if SQLite
-	// ... implementation details ...
+	if !isPostgres(config.DBURI) {
+		dbFile := filepath.Join(config.PathStorages, fmt.Sprintf("whatsapp-%s.db", agentID))
+		_ = os.Remove(dbFile)
+		_ = os.Remove(dbFile + "-shm")
+		_ = os.Remove(dbFile + "-wal")
+	}
+
+	delete(cm.qrCache, agentID)
 
 	return nil
+}
+
+// CacheQR stores the latest QR code for an agent.
+func (cm *ClientManager) CacheQR(agentID string, contentType, base64data string) {
+	cm.mu.Lock()
+	cm.qrCache[agentID] = cachedQR{contentType: contentType, base64: base64data, updatedAt: time.Now().Unix()}
+	cm.mu.Unlock()
+}
+
+// GetCachedQR returns the cached QR if present.
+func (cm *ClientManager) GetCachedQR(agentID string) (contentType, base64data string, ok bool, updatedAt time.Time) {
+	cm.mu.RLock()
+	qr, exists := cm.qrCache[agentID]
+	cm.mu.RUnlock()
+	if !exists {
+		return "", "", false, time.Time{}
+	}
+	return qr.contentType, qr.base64, true, time.Unix(qr.updatedAt, 0)
 }
 
 func isPostgres(uri string) bool {

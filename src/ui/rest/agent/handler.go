@@ -19,15 +19,24 @@ func NewHandler(usecase agent.IAgentUsecase) *Handler {
 func (h *Handler) authMiddleware(c *fiber.Ctx) (string, error) {
 	auth := c.Get("Authorization")
 	if auth == "" {
+		// Fallbacks for environments that strip Authorization
+		if alt := c.Get("X-Api-Key"); alt != "" {
+			return alt, nil
+		}
+		if qp := c.Query("token"); qp != "" {
+			return qp, nil
+		}
+	}
+	if auth == "" {
 		return "", fiber.NewError(401, "UNAUTHORIZED: Missing Authorization header")
 	}
 
-	parts := strings.Split(auth, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
+	parts := strings.Fields(auth)
+	if len(parts) < 2 || strings.ToLower(parts[0]) != "bearer" {
 		return "", fiber.NewError(401, "UNAUTHORIZED: Invalid Authorization format")
 	}
-
-	return parts[1], nil
+	// Support users who typed "Bearer <token>" or accidentally "Bearer Bearer <token>"
+	return parts[len(parts)-1], nil
 }
 
 // POST /agents/:agentId/run

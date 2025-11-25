@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp API MultiDevice - Swagger UI</title>
+    <link rel="stylesheet" type="text/css" href="swagger-ui.css" />
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        body {
+            margin:0;
+            background: #fafafa;
+        }
+        .swagger-ui .topbar {
+            background-color: #1d3557;
+            border-bottom: 1px solid #1d3557;
+        }
+        .swagger-ui .topbar .download-url-wrapper .download-url-button {
+            background: #457b9d;
+            border-color: #457b9d;
+        }
+        .swagger-ui .topbar .download-url-wrapper .download-url-button:hover {
+            background: #1d3557;
+            border-color: #1d3557;
+        }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+
+    <script src="swagger-ui-bundle.js"></script>
+    <script src="swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                url: '/docs/openapi.yaml',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                validatorUrl: null,
+                supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+                onComplete: function() {
+                    console.log("Swagger UI loaded successfully");
+                },
+                requestInterceptor: function(request) {
+                    // Add any global request interceptors here
+                    return request;
+                },
+                responseInterceptor: function(response) {
+                    // Add any global response interceptors here
+                    return response;
+                }
+            });
+
+            // Enhanced Basic Auth support
+            function addBasicAuthUI() {
+                const container = document.createElement('div');
+                container.style.position = 'fixed';
+                container.style.top = '10px';
+                container.style.right = '10px';
+                container.style.zIndex = '9999';
+                container.style.display = 'flex';
+                container.style.gap = '8px';
+
+                const authButton = document.createElement('button');
+                authButton.textContent = 'Set Basic Auth';
+                authButton.style.padding = '8px 16px';
+                authButton.style.backgroundColor = '#457b9d';
+                authButton.style.color = 'white';
+                authButton.style.border = 'none';
+                authButton.style.borderRadius = '4px';
+                authButton.style.cursor = 'pointer';
+
+                const clearAuthButton = document.createElement('button');
+                clearAuthButton.textContent = 'Clear Auth';
+                clearAuthButton.style.padding = '8px 16px';
+                clearAuthButton.style.backgroundColor = '#e63946';
+                clearAuthButton.style.color = 'white';
+                clearAuthButton.style.border = 'none';
+                clearAuthButton.style.borderRadius = '4px';
+                clearAuthButton.style.cursor = 'pointer';
+
+                authButton.onclick = function() {
+                    const username = prompt('Enter username:');
+                    const password = prompt('Enter password:');
+
+                    if (username && password) {
+                        // Store credentials for future requests
+                        localStorage.setItem('swagger-basic-auth', btoa(username + ':' + password));
+
+                        // Add authorization header to all requests
+                        ui.preauthorizeBasic('basicAuth', username, password);
+
+                        // Update button style to show auth is active
+                        authButton.style.backgroundColor = '#2a9d8f';
+                        authButton.textContent = `Auth: ${username}`;
+
+                        alert('Basic Auth credentials set successfully! You can now test authenticated endpoints.');
+                    }
+                };
+
+                clearAuthButton.onclick = function() {
+                    localStorage.removeItem('swagger-basic-auth');
+                    authButton.style.backgroundColor = '#457b9d';
+                    authButton.textContent = 'Set Basic Auth';
+                    alert('Basic Auth credentials cleared.');
+                };
+
+                container.appendChild(authButton);
+                container.appendChild(clearAuthButton);
+                document.body.appendChild(container);
+
+                // Check for stored credentials on load
+                const storedAuth = localStorage.getItem('swagger-basic-auth');
+                if (storedAuth) {
+                    const credentials = atob(storedAuth).split(':');
+                    if (credentials.length === 2) {
+                        ui.preauthorizeBasic('basicAuth', credentials[0], credentials[1]);
+                        authButton.style.backgroundColor = '#2a9d8f';
+                        authButton.textContent = `Auth: ${credentials[0]}`;
+                    }
+                }
+            }
+
+            // Add custom CSS for better styling
+            const style = document.createElement('style');
+            style.textContent = `
+                .swagger-ui .topbar .download-url-wrapper {
+                    display: none;
+                }
+                .swagger-ui .info .title {
+                    color: #1d3557;
+                }
+                .swagger-ui .scheme-container {
+                    background: #f1faee;
+                    border: 1px solid #a8dadc;
+                    margin: 16px 0;
+                }
+            `;
+            document.head.appendChild(style);
+
+            // Add the Basic Auth UI
+            addBasicAuthUI();
+        };
+    </script>
+</body>
+</html>
