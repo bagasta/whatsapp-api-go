@@ -36,6 +36,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types/events"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
 )
 
 var (
@@ -330,10 +331,17 @@ func initApp() {
 
 	// Auto-forward inbound messages to AI for multi-agent clients
 	whatsapp.SetAgentForwarder(func(agentID string, evt *events.Message) {
-		// Skip self, group, or broadcast messages
+		// Skip self or broadcast messages
 		chatJID := evt.Info.Chat.String()
-		if evt.Info.IsFromMe || utils.IsGroupJID(chatJID) || evt.Info.IsIncomingBroadcast() {
+		if evt.Info.IsFromMe || evt.Info.IsIncomingBroadcast() {
 			return
+		}
+
+		// Resolve client & self JID for mention detection
+		client := clientManager.GetClient(agentID)
+		selfJID := ""
+		if client != nil && client.Store != nil && client.Store.ID != nil {
+			selfJID = client.Store.ID.String()
 		}
 
 		// Extract human text
@@ -381,6 +389,29 @@ func initApp() {
 			return
 		}
 
+		// For group chats, only forward if:
+		// - bot is mentioned (ContextInfo),
+		// - text contains bare self user / phone,
+		// - user is replying to bot,
+		// - OR (fallback) there is any mention in the message (so mentions that differ in JID format still pass).
+		if utils.IsGroupJID(chatJID) {
+			selfUser := ""
+			selfPhone := ""
+			if j, err := types.ParseJID(selfJID); err == nil {
+				selfUser = j.User
+				selfPhone = strings.TrimPrefix(j.User, "+")
+			}
+			mentioned := isMentioned(evt.Message, selfJID)
+			containsSelf := selfUser != "" && strings.Contains(text, selfUser)
+			containsPhone := selfPhone != "" && strings.Contains(text, selfPhone)
+			repliesToBot := isReplyToSelf(evt.Message, selfJID)
+			hasAnyMention := len(collectMentioned(evt.Message)) > 0
+			if !mentioned && !containsSelf && !containsPhone && !repliesToBot && !hasAnyMention {
+				logrus.Debugf("Auto-forward AI skipped (group, no mention): agent=%s chat=%s self=%s text=%q", agentID, chatJID, selfUser, text)
+				return
+			}
+		}
+
 		// Resolve API key from session record
 		sessionData, err := sessionRepo.FindByAgentID(agentID)
 		if err != nil {
@@ -410,4 +441,124 @@ func Execute(embedIndex embed.FS, embedViews embed.FS) {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// unwrapMessage walks through wrappers (view once / ephemeral) to reach inner content.
+func unwrapMessage(msg *waE2E.Message) *waE2E.Message {
+	if msg == nil {
+		return nil
+	}
+	inner := msg
+	for i := 0; i < 3; i++ {
+		switch {
+		case inner.GetViewOnceMessage() != nil && inner.GetViewOnceMessage().GetMessage() != nil:
+			inner = inner.GetViewOnceMessage().GetMessage()
+			continue
+		case inner.GetEphemeralMessage() != nil && inner.GetEphemeralMessage().GetMessage() != nil:
+			inner = inner.GetEphemeralMessage().GetMessage()
+			continue
+		case inner.GetViewOnceMessageV2() != nil && inner.GetViewOnceMessageV2().GetMessage() != nil:
+			inner = inner.GetViewOnceMessageV2().GetMessage()
+			continue
+		case inner.GetViewOnceMessageV2Extension() != nil && inner.GetViewOnceMessageV2Extension().GetMessage() != nil:
+			inner = inner.GetViewOnceMessageV2Extension().GetMessage()
+			continue
+		}
+		break
+	}
+	return inner
+}
+
+// isMentioned returns true if message mentions targetJID (case-insensitive).
+func isMentioned(msg *waE2E.Message, targetJID string) bool {
+	if targetJID == "" || msg == nil {
+		return false
+	}
+	inner := unwrapMessage(msg)
+	if inner == nil {
+		return false
+	}
+	if ext := inner.GetExtendedTextMessage(); ext != nil {
+		if ci := ext.GetContextInfo(); ci != nil {
+			targetDigits := phoneDigits(targetJID)
+			for _, jid := range ci.GetMentionedJID() {
+				if equalBareJID(jid, targetJID) {
+					return true
+				}
+				if targetDigits != "" && phoneDigits(jid) == targetDigits {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// equalBareJID compares two JIDs ignoring device/resource part.
+func equalBareJID(a, b string) bool {
+	parse := func(s string) (types.JID, bool) {
+		j, err := types.ParseJID(s)
+		if err != nil {
+			return types.JID{}, false
+		}
+		return j, true
+	}
+	ja, oka := parse(a)
+	jb, okb := parse(b)
+	if oka && okb {
+		return strings.EqualFold(ja.User, jb.User) && strings.EqualFold(ja.Server, jb.Server)
+	}
+	// Fallback: strip device part "user:device@server"
+	strip := func(s string) string {
+		if idx := strings.Index(s, ":"); idx != -1 {
+			if at := strings.Index(s, "@"); at != -1 {
+				return s[:idx] + s[at:]
+			}
+		}
+		return s
+	}
+	return strings.EqualFold(strip(a), strip(b))
+}
+
+func phoneDigits(s string) string {
+	var b strings.Builder
+	for _, ch := range s {
+		if ch >= '0' && ch <= '9' {
+			b.WriteRune(ch)
+		}
+	}
+	return b.String()
+}
+
+// collectMentioned returns mentioned JIDs from ExtendedText context info.
+func collectMentioned(msg *waE2E.Message) []string {
+	inner := unwrapMessage(msg)
+	if inner == nil {
+		return nil
+	}
+	if ext := inner.GetExtendedTextMessage(); ext != nil {
+		if ci := ext.GetContextInfo(); ci != nil {
+			return ci.GetMentionedJID()
+		}
+	}
+	return nil
+}
+
+// isReplyToSelf checks if the message quotes a message from selfJID.
+func isReplyToSelf(msg *waE2E.Message, selfJID string) bool {
+	if selfJID == "" || msg == nil {
+		return false
+	}
+	inner := unwrapMessage(msg)
+	if inner == nil {
+		return false
+	}
+	if ext := inner.GetExtendedTextMessage(); ext != nil {
+		if ci := ext.GetContextInfo(); ci != nil {
+			if ci.GetParticipant() != "" && equalBareJID(ci.GetParticipant(), selfJID) {
+				return true
+			}
+		}
+	}
+	return false
 }
