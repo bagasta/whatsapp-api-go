@@ -34,6 +34,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types/events"
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 )
 
 var (
@@ -325,6 +327,80 @@ func initApp() {
 	newsletterUsecase = usecase.NewNewsletterService()
 	sessionUsecase = domainSession.NewSessionUsecase(&sessionRepo, &apiKeyRepo, clientManager)
 	agentUsecase = domainAgent.NewAgentUsecase(&sessionRepo, &apiKeyRepo, clientManager)
+
+	// Auto-forward inbound messages to AI for multi-agent clients
+	whatsapp.SetAgentForwarder(func(agentID string, evt *events.Message) {
+		// Skip self, group, or broadcast messages
+		chatJID := evt.Info.Chat.String()
+		if evt.Info.IsFromMe || utils.IsGroupJID(chatJID) || evt.Info.IsIncomingBroadcast() {
+			return
+		}
+
+		// Extract human text
+		extractText := func(msg *waE2E.Message) string {
+			inner := msg
+			for i := 0; i < 3; i++ {
+				switch {
+				case inner.GetViewOnceMessage() != nil && inner.GetViewOnceMessage().GetMessage() != nil:
+					inner = inner.GetViewOnceMessage().GetMessage()
+					continue
+				case inner.GetEphemeralMessage() != nil && inner.GetEphemeralMessage().GetMessage() != nil:
+					inner = inner.GetEphemeralMessage().GetMessage()
+					continue
+				case inner.GetViewOnceMessageV2() != nil && inner.GetViewOnceMessageV2().GetMessage() != nil:
+					inner = inner.GetViewOnceMessageV2().GetMessage()
+					continue
+				case inner.GetViewOnceMessageV2Extension() != nil && inner.GetViewOnceMessageV2Extension().GetMessage() != nil:
+					inner = inner.GetViewOnceMessageV2Extension().GetMessage()
+					continue
+				}
+				break
+			}
+
+			if conv := inner.GetConversation(); conv != "" {
+				return conv
+			}
+			if ext := inner.GetExtendedTextMessage(); ext != nil && ext.GetText() != "" {
+				return ext.GetText()
+			}
+			if protoMsg := inner.GetProtocolMessage(); protoMsg != nil {
+				if edited := protoMsg.GetEditedMessage(); edited != nil {
+					if ext := edited.GetExtendedTextMessage(); ext != nil && ext.GetText() != "" {
+						return ext.GetText()
+					}
+					if conv := edited.GetConversation(); conv != "" {
+						return conv
+					}
+				}
+			}
+			return ""
+		}
+
+		text := extractText(evt.Message)
+		if text == "" {
+			return
+		}
+
+		// Resolve API key from session record
+		sessionData, err := sessionRepo.FindByAgentID(agentID)
+		if err != nil {
+			logrus.Warnf("Auto-forward AI: session lookup failed for agent %s: %v", agentID, err)
+			return
+		}
+		if sessionData == nil || sessionData.ApiKey == "" {
+			logrus.Warnf("Auto-forward AI: no API key for agent %s, skipping", agentID)
+			return
+		}
+
+		_, err = agentUsecase.ExecuteRun(agentID, sessionData.ApiKey, domainAgent.RunRequest{
+			Input:      text,
+			SessionID:  chatJID,
+			Parameters: map[string]any{"max_steps": 3},
+		})
+		if err != nil {
+			logrus.Warnf("Auto-forward AI: ExecuteRun failed for agent %s: %v", agentID, err)
+		}
+	})
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

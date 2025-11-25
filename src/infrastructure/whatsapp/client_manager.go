@@ -54,54 +54,16 @@ func (cm *ClientManager) CreateClient(ctx context.Context, agentID string) (*wha
 		return client, nil
 	}
 
-	// Use separate DB for each agent to ensure isolation
-	// DB URI format: file:storages/whatsapp-{agentID}.db?_foreign_keys=on
-	dbPath := fmt.Sprintf("file:%s/whatsapp-%s.db?_foreign_keys=on", config.PathStorages, agentID)
+	// Use separate DB for each agent to ensure isolation.
+	// IMPORTANT: Even if main DB is Postgres, sharing the same store across multiple
+	// agents will cause "stream replaced" conflicts. To avoid that, we keep a dedicated
+	// SQLite store per agent.
+	dbPath := fmt.Sprintf("file:%s/whatsapp-%s.db?_foreign_keys=on&_journal_mode=WAL", config.PathStorages, agentID)
 
-	// If using Postgres, we might need a different strategy, e.g. table prefix or just one DB with multiple devices.
-	// But for now, let's assume SQLite for individual files or handle Postgres later.
-	// If config.DBURI is Postgres, we might want to use that but with a device discriminator?
-	// The user asked for "Postgres migration", so we should support Postgres.
-	// If Postgres, we can use the SAME DB but we need to track which DeviceID belongs to which AgentID.
-	// But `whatsmeow` doesn't let us tag devices easily.
-
-	// Strategy:
-	// If SQLite: use separate files.
-	// If Postgres: use the shared DB, but we need to know which JID corresponds to this agent.
-	// Since we don't know the JID before login, this is tricky with a shared DB.
-	// HOWEVER, `whatsmeow` allows creating a NEW device.
-	// We can store the `JID` (DeviceID) in our `whatsapp_user` table after we create/load it.
-
-	// Let's stick to the "Separate DB" approach for SQLite, and for Postgres...
-	// Maybe for now we assume SQLite as per the file structure in `settings.go` (storages/whatsapp.db).
-	// If the user wants Postgres, we might need to change this.
-	// Let's implement a helper to get the store.
-
-	var storeContainer *sqlstore.Container
-	var err error
-
-	// Check if main config is Postgres
-	if isPostgres(config.DBURI) {
-		// For Postgres, we use the main DB.
-		// We need to find the device associated with this agent.
-		// This requires us to store the JID in `whatsapp_user` table.
-		// But wait, `whatsapp_user` table structure in API-OLD.MD doesn't have JID column (except maybe implicitly in ID?).
-		// Actually `API-OLD.MD` says: "Tabel whatsapp_user ... Primary key: (user_id, agent_id)".
-
-		// If we use Postgres, we can't easily separate by DB name.
-		// We will use the shared store.
-		dbLog := waLog.Stdout("Database", config.WhatsappLogLevel, true)
-		storeContainer, err = sqlstore.New(ctx, "postgres", config.DBURI, dbLog)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// SQLite
-		dbLog := waLog.Stdout("Database", config.WhatsappLogLevel, true)
-		storeContainer, err = sqlstore.New(ctx, "sqlite3", dbPath, dbLog)
-		if err != nil {
-			return nil, err
-		}
+	dbLog := waLog.Stdout("Database", config.WhatsappLogLevel, true)
+	storeContainer, err := sqlstore.New(ctx, "sqlite3", dbPath, dbLog)
+	if err != nil {
+		return nil, err
 	}
 
 	cm.dbs[agentID] = storeContainer
@@ -138,9 +100,8 @@ func (cm *ClientManager) CreateClient(ctx context.Context, agentID string) (*wha
 
 	// Add Event Handler
 	client.AddEventHandler(func(rawEvt interface{}) {
-		// We need to pass agentID to the handler if needed, or just use a closure
-		// For now, using the existing handler but we might need to adapt it
-		handler(ctx, rawEvt, cm.chatStorage)
+		// include agentID to avoid cross-agent conflicts and enable per-agent hooks
+		handler(ctx, rawEvt, cm.chatStorage, agentID)
 	})
 
 	cm.clients[agentID] = client

@@ -45,7 +45,16 @@ var (
 	log           waLog.Logger
 	historySyncID int32
 	startupTime   = time.Now().Unix()
+
+	// Optional callback to auto-forward inbound messages to AI per agent
+	agentForwarder func(agentID string, evt *events.Message)
 )
+
+// SetAgentForwarder registers a callback that will be called for inbound messages
+// for a given agentID (only available when using ClientManager).
+func SetAgentForwarder(fn func(agentID string, evt *events.Message)) {
+	agentForwarder = fn
+}
 
 // InitWaDB initializes the WhatsApp database connection
 func InitWaDB(ctx context.Context, DBURI string) *sqlstore.Container {
@@ -142,7 +151,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	cli.AutoTrustIdentity = true
 
 	cli.AddEventHandler(func(rawEvt interface{}) {
-		handler(ctx, rawEvt, chatStorageRepo)
+		handler(ctx, rawEvt, chatStorageRepo, "")
 	})
 
 	return cli
@@ -442,10 +451,10 @@ func handleRemoteLogout(ctx context.Context, chatStorageRepo domainChatStorage.I
 }
 
 // handler is the main event handler for WhatsApp events
-func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.IChatStorageRepository, agentID string) {
 	switch evt := rawEvt.(type) {
 	case *events.DeleteForMe:
-		handleDeleteForMe(ctx, evt, chatStorageRepo)
+		handleDeleteForMe(ctx, agentID, evt, chatStorageRepo)
 	case *events.AppStateSyncComplete:
 		handleAppStateSyncComplete(ctx, evt)
 	case *events.PairSuccess:
@@ -457,7 +466,7 @@ func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.
 	case *events.StreamReplaced:
 		handleStreamReplaced(ctx)
 	case *events.Message:
-		handleMessage(ctx, evt, chatStorageRepo)
+		handleMessage(ctx, agentID, evt, chatStorageRepo)
 	case *events.Receipt:
 		handleReceipt(ctx, evt)
 	case *events.Presence:
@@ -473,7 +482,7 @@ func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.
 
 // Event handler functions
 
-func handleDeleteForMe(ctx context.Context, evt *events.DeleteForMe, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handleDeleteForMe(ctx context.Context, agentID string, evt *events.DeleteForMe, chatStorageRepo domainChatStorage.IChatStorageRepository) {
 	log.Infof("Deleted message %s for %s", evt.MessageID, evt.SenderJID.String())
 
 	// Find the message to get its chat JID
@@ -555,7 +564,7 @@ func handleStreamReplaced(_ context.Context) {
 	os.Exit(0)
 }
 
-func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handleMessage(ctx context.Context, agentID string, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository) {
 	metrics.IncMessagesReceived()
 	// Log message metadata
 	metaParts := buildMessageMetaParts(evt)
@@ -582,6 +591,11 @@ func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo dom
 
 	// Forward to webhook if configured
 	handleWebhookForward(ctx, evt)
+
+	// Auto-forward to AI if callback is set and agent context exists
+	if agentID != "" && agentForwarder != nil {
+		go agentForwarder(agentID, evt)
+	}
 }
 
 func buildMessageMetaParts(evt *events.Message) []string {

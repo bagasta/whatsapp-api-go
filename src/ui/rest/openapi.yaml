@@ -12,7 +12,7 @@ tags:
   - name: session
     description: Session lifecycle compatible with API-OLD
   - name: agent
-    description: Agent operations (run/messages/media) with Bearer auth
+    description: Agent operations (run/messages/media) with API key (Bearer or X-Api-Key)
   - name: user
     description: Getting information
   - name: send
@@ -26,7 +26,8 @@ tags:
   - name: newsletter
     description: newsletter setting
 security:
-  - basicAuth: []
+  # No global security; see per-path. Basic auth is applied at server level if configured.
+  []
 
 paths:
   /app/login:
@@ -227,6 +228,8 @@ paths:
     post:
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
+        - tokenQuery: []
       operationId: agentRun
       tags:
         - agent
@@ -263,6 +266,8 @@ paths:
     post:
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
+        - tokenQuery: []
       operationId: agentSendMessage
       tags:
         - agent
@@ -295,6 +300,8 @@ paths:
     post:
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
+        - tokenQuery: []
       operationId: agentSendMedia
       tags:
         - agent
@@ -2631,6 +2638,21 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        Bearer token for agent endpoints. Use `Authorization: Bearer <API_KEY>`.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Alternative to Bearer for environments that strip Authorization headers.
+        Use `X-Api-Key: <API_KEY>`.
+    tokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: |
+        Last-resort fallback for passing the token via query string (e.g. when Swagger cannot set headers).
   schemas:
     QrData:
       type: object

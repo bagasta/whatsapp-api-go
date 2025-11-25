@@ -17,6 +17,98 @@
         body {
             margin:0;
             background: #fafafa;
+            font-family: "Inter", "Segoe UI", sans-serif;
+        }
+        #quicktest-panel {
+            margin: 12px 16px 0 16px;
+            padding: 16px;
+            background: #f8fbff;
+            border: 1px solid #d4e3f5;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+        }
+        .qt-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .qt-title {
+            font-weight: 700;
+            font-size: 18px;
+            color: #1d3557;
+        }
+        .qt-subtitle {
+            color: #4a5568;
+            font-size: 13px;
+        }
+        .qt-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .qt-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .qt-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 13px;
+            color: #1f2937;
+        }
+        .qt-field input {
+            padding: 8px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .qt-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .qt-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #457b9d;
+            color: #fff;
+            font-size: 13px;
+            transition: all 0.15s ease;
+        }
+        .qt-btn:hover { opacity: 0.9; }
+        .qt-primary { background: #1d3557; }
+        .qt-secondary { background: #2a9d8f; }
+        .qt-qr-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .qt-qr-title { font-size: 13px; color: #334155; }
+        #qt-qr-img {
+            width: 140px;
+            height: 140px;
+            border: 1px dashed #94a3b8;
+            border-radius: 8px;
+            object-fit: contain;
+            background: #fff;
+        }
+        .qt-log {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            height: 220px;
+            overflow: auto;
+            font-size: 12px;
+            line-height: 1.45;
         }
         .swagger-ui .topbar {
             background-color: #1d3557;
@@ -33,6 +125,60 @@
     </style>
 </head>
 <body>
+    <div id="quicktest-panel">
+        <div class="qt-header">
+            <div>
+                <div class="qt-title">Quick Test Console</div>
+                <div class="qt-subtitle">Masukkan kredensial sekali, lalu jalankan serangkaian endpoint.</div>
+            </div>
+            <div class="qt-actions">
+                <button id="qt-save" class="qt-btn">Save</button>
+                <button id="qt-run" class="qt-btn qt-primary">Run Smoke Test</button>
+            </div>
+        </div>
+        <div class="qt-grid">
+            <label class="qt-field">
+                <span>Base URL</span>
+                <input id="qt-base-url" type="text" placeholder="http://localhost:3000" />
+            </label>
+            <label class="qt-field">
+                <span>User ID</span>
+                <input id="qt-user-id" type="text" placeholder="user123" />
+            </label>
+            <label class="qt-field">
+                <span>Agent ID</span>
+                <input id="qt-agent-id" type="text" placeholder="agent001" />
+            </label>
+            <label class="qt-field">
+                <span>Agent Name</span>
+                <input id="qt-agent-name" type="text" placeholder="My Agent" />
+            </label>
+            <label class="qt-field">
+                <span>API Key (Bearer / X-Api-Key / token)</span>
+                <input id="qt-api-key" type="text" placeholder="paste token di sini" />
+            </label>
+            <label class="qt-field">
+                <span>Target Phone / Session JID</span>
+                <input id="qt-phone" type="text" placeholder="628xxxx" />
+            </label>
+            <label class="qt-field">
+                <span>Sample Message</span>
+                <input id="qt-message" type="text" value="Hello from Swagger Quick Test" />
+            </label>
+        </div>
+        <div class="qt-buttons">
+            <button id="qt-create-session" class="qt-btn qt-secondary">Create Session</button>
+            <button id="qt-get-session" class="qt-btn qt-secondary">Get Session</button>
+            <button id="qt-get-qr" class="qt-btn qt-secondary">Get QR</button>
+            <button id="qt-agent-send" class="qt-btn qt-secondary">Agent Send Message</button>
+            <button id="qt-agent-run" class="qt-btn qt-secondary">Agent Run</button>
+        </div>
+        <div class="qt-qr-wrap">
+            <div class="qt-qr-title">QR Preview (auto update setelah create/qr)</div>
+            <img id="qt-qr-img" alt="QR will appear here" />
+        </div>
+        <pre id="qt-log" class="qt-log"></pre>
+    </div>
     <div id="swagger-ui"></div>
 
     <script src="swagger-ui-bundle.js"></script>
@@ -155,6 +301,203 @@
 
             // Add the Basic Auth UI
             addBasicAuthUI();
+
+            // -------- Quick Test Console ----------
+            const state = {
+                baseUrl: '',
+                userId: '',
+                agentId: '',
+                agentName: '',
+                apiKey: '',
+                phone: '',
+                message: 'Hello from Swagger Quick Test',
+            };
+
+            const els = {
+                baseUrl: document.getElementById('qt-base-url'),
+                userId: document.getElementById('qt-user-id'),
+                agentId: document.getElementById('qt-agent-id'),
+                agentName: document.getElementById('qt-agent-name'),
+                apiKey: document.getElementById('qt-api-key'),
+                phone: document.getElementById('qt-phone'),
+                message: document.getElementById('qt-message'),
+                log: document.getElementById('qt-log'),
+                qr: document.getElementById('qt-qr-img'),
+                btnSave: document.getElementById('qt-save'),
+                btnRun: document.getElementById('qt-run'),
+                btnCreate: document.getElementById('qt-create-session'),
+                btnGet: document.getElementById('qt-get-session'),
+                btnQR: document.getElementById('qt-get-qr'),
+                btnAgentRun: document.getElementById('qt-agent-run'),
+                btnAgentSend: document.getElementById('qt-agent-send'),
+            };
+
+            const defaultBasePath = (() => {
+                const path = window.location.pathname;
+                const idx = path.indexOf('/docs');
+                const base = idx >= 0 ? path.slice(0, idx) : '';
+                return window.location.origin + base;
+            })();
+
+            function loadState() {
+                const saved = JSON.parse(localStorage.getItem('swagger-quicktest') || '{}');
+                Object.assign(state, saved);
+                state.baseUrl = state.baseUrl || defaultBasePath;
+                state.message = state.message || 'Hello from Swagger Quick Test';
+                els.baseUrl.value = state.baseUrl;
+                els.userId.value = state.userId || '';
+                els.agentId.value = state.agentId || '';
+                els.agentName.value = state.agentName || '';
+                els.apiKey.value = state.apiKey || '';
+                els.phone.value = state.phone || '';
+                els.message.value = state.message;
+            }
+
+            function persist() {
+                const newState = {
+                    baseUrl: els.baseUrl.value.trim() || defaultBasePath,
+                    userId: els.userId.value.trim(),
+                    agentId: els.agentId.value.trim(),
+                    agentName: els.agentName.value.trim(),
+                    apiKey: els.apiKey.value.trim(),
+                    phone: els.phone.value.trim(),
+                    message: els.message.value,
+                };
+                Object.assign(state, newState);
+                localStorage.setItem('swagger-quicktest', JSON.stringify(newState));
+                log('State saved.');
+            }
+
+            function log(msg, data) {
+                const ts = new Date().toISOString();
+                const line = data ? `${ts} | ${msg} | ${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}` : `${ts} | ${msg}`;
+                els.log.textContent = `${line}\n${els.log.textContent}`;
+            }
+
+            function authHeaders() {
+                const headers = {};
+                if (state.apiKey) {
+                    headers['Authorization'] = `Bearer ${state.apiKey}`;
+                    headers['X-Api-Key'] = state.apiKey;
+                }
+                return headers;
+            }
+
+            function normalizeJid(val) {
+                if (!val) return '';
+                const v = val.trim();
+                return v.includes('@') ? v : `${v}@s.whatsapp.net`;
+            }
+
+            async function api(path, options = {}) {
+                const url = (state.baseUrl || defaultBasePath).replace(/\/$/, '') + path;
+                const resp = await fetch(url, options);
+                const bodyText = await resp.text();
+                let body;
+                try { body = JSON.parse(bodyText); } catch { body = bodyText; }
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}: ${bodyText}`);
+                }
+                return body;
+            }
+
+            async function createSession() {
+                const payload = {
+                    userId: state.userId,
+                    agentId: state.agentId,
+                    agentName: state.agentName || state.agentId,
+                    apikey: state.apiKey,
+                };
+                const res = await api('/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                log('Create session ok', res);
+                maybeShowQR(res.qr);
+                return res;
+            }
+
+            async function getSession() {
+                const res = await api(`/sessions/${state.agentId}`);
+                log('Get session ok', res);
+                maybeShowQR(res.qr);
+                return res;
+            }
+
+            async function getQR() {
+                const res = await api(`/sessions/${state.agentId}/qr`, { method: 'POST' });
+                log('Get QR ok', res);
+                maybeShowQR(res.qr);
+                return res;
+            }
+
+            async function agentRun() {
+                const payload = {
+                    input: state.message,
+                    session_id: normalizeJid(state.phone || state.userId),
+                    parameters: { max_steps: 3 },
+                };
+                const res = await api(`/agents/${state.agentId}/run`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...authHeaders(),
+                    },
+                    body: JSON.stringify(payload),
+                });
+                log('Agent run ok', res);
+                return res;
+            }
+
+            async function agentSendMessage() {
+                const payload = {
+                    to: normalizeJid(state.phone || state.userId),
+                    message: state.message,
+                };
+                const res = await api(`/agents/${state.agentId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...authHeaders(),
+                    },
+                    body: JSON.stringify(payload),
+                });
+                log('Agent send ok', res);
+                return res;
+            }
+
+            function maybeShowQR(qr) {
+                if (qr && qr.base64 && qr.contentType) {
+                    els.qr.src = `data:${qr.contentType};base64,${qr.base64}`;
+                }
+            }
+
+            async function runSmoke() {
+                try {
+                    persist();
+                    await createSession();
+                    await getSession();
+                    await getQR();
+                    await agentSendMessage();
+                    await agentRun();
+                    log('Smoke test complete ✅');
+                } catch (err) {
+                    log('Smoke test failed ❌', err.message || err);
+                }
+            }
+
+            // Wire events
+            els.btnSave.onclick = persist;
+            els.btnRun.onclick = runSmoke;
+            els.btnCreate.onclick = () => { persist(); createSession().catch(err => log('Create session failed', err.message)); };
+            els.btnGet.onclick = () => { persist(); getSession().catch(err => log('Get session failed', err.message)); };
+            els.btnQR.onclick = () => { persist(); getQR().catch(err => log('Get QR failed', err.message)); };
+            els.btnAgentRun.onclick = () => { persist(); agentRun().catch(err => log('Agent run failed', err.message)); };
+            els.btnAgentSend.onclick = () => { persist(); agentSendMessage().catch(err => log('Agent send failed', err.message)); };
+
+            loadState();
+            log('Quick Test ready. Set fields, Save, lalu Run Smoke Test.');
         };
     </script>
 </body>

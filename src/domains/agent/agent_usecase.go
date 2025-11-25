@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +101,17 @@ func (u *AgentUsecase) ExecuteRun(agentID, apiKey string, request RunRequest) (*
 		}
 	}
 
-	// 4. Call AI Backend
+	// Ensure client ready before calling AI (needed for typing + reply)
+	client := u.clientManager.GetClient(agentID)
+	if client == nil || !client.IsLoggedIn() {
+		return nil, errors.New("SESSION_NOT_READY")
+	}
+
+	// 4. Typing indicator ON while waiting for AI
+	u.sendTyping(ctx, client, jid, true)
+	defer u.sendTyping(context.Background(), client, jid, false)
+
+	// 5. Call AI Backend
 	endpoint := sessionData.EndpointUrlRun
 	if endpoint == "" {
 		// Fallback to default
@@ -113,20 +124,16 @@ func (u *AgentUsecase) ExecuteRun(agentID, apiKey string, request RunRequest) (*
 		"parameters": params,
 	}
 
-	reply, err := u.callAIBackend(endpoint, apiKey, aiPayload, traceID)
+	replyRaw, err := u.callAIBackend(endpoint, apiKey, aiPayload, traceID)
 	if err != nil {
 		logrus.Errorf("[%s] AI call failed: %v", traceID, err)
 		return nil, err
 	}
+	reply := sanitizeReply(replyRaw)
 
-	// 5. Send reply via WhatsApp if present
+	// 6. Send reply via WhatsApp if present
 	replySent := false
 	if reply != "" {
-		client := u.clientManager.GetClient(agentID)
-		if client == nil || !client.IsLoggedIn() {
-			return nil, errors.New("SESSION_NOT_READY")
-		}
-
 		if err := u.sendText(client, jid, reply); err != nil {
 			logrus.Errorf("[%s] Failed to send reply: %v", traceID, err)
 		} else {
@@ -365,14 +372,54 @@ func (u *AgentUsecase) callAIBackend(endpoint, apiKey string, payload map[string
 		return "", fmt.Errorf("AI_DOWNSTREAM_ERROR: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		Reply string `json:"reply"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to parse AI response: %w", err)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read AI response: %w", err)
 	}
 
-	return result.Reply, nil
+	// Support multiple shapes:
+	// 1) { "reply": "text" }
+	// 2) LangChain style: { "output": { "output": "text", ... }, "status": "COMPLETED" }
+	// 3) Fallback to top-level "output" string
+	var result struct {
+		Reply    string `json:"reply"`
+		Response string `json:"response"` // backend AI variant
+		Output   struct {
+			Output string `json:"output"`
+			Final  string `json:"final"`
+			Msg    string `json:"message"`
+		} `json:"output"`
+		OutputString string `json:"output"`
+		Message      string `json:"message"`
+		ErrorMessage string `json:"error_message"`
+	}
+
+	_ = json.Unmarshal(raw, &result)
+
+	reply := result.Response
+	if reply == "" {
+		reply = result.Reply
+	}
+	if reply == "" {
+		switch {
+		case result.Output.Output != "":
+			reply = result.Output.Output
+		case result.Output.Final != "":
+			reply = result.Output.Final
+		case result.Output.Msg != "":
+			reply = result.Output.Msg
+		case result.OutputString != "":
+			reply = result.OutputString
+		case result.Message != "":
+			reply = result.Message
+		}
+	}
+
+	if reply == "" {
+		return "", fmt.Errorf("AI response missing reply text: %s", string(raw))
+	}
+
+	return reply, nil
 }
 
 func (u *AgentUsecase) sendText(client *whatsmeow.Client, jid, text string) error {
@@ -390,6 +437,40 @@ func (u *AgentUsecase) sendText(client *whatsmeow.Client, jid, text string) erro
 		metrics.IncMessagesSent()
 	}
 	return err
+}
+
+// sendTyping sends chat presence typing indicators; errors are logged but not fatal.
+func (u *AgentUsecase) sendTyping(ctx context.Context, client *whatsmeow.Client, jid string, start bool) {
+	recipient, err := types.ParseJID(jid)
+	if err != nil || client == nil {
+		return
+	}
+	var presence types.ChatPresence
+	if start {
+		presence = types.ChatPresenceComposing
+	} else {
+		presence = types.ChatPresencePaused
+	}
+	// Use text media hint so WA shows typing indicator
+	if err := client.SendChatPresence(ctx, recipient, presence, types.ChatPresenceMediaText); err != nil {
+		logrus.Debugf("sendTyping failed (%v): %v", presence, err)
+	}
+}
+
+// sanitizeReply normalizes AI responses to be WhatsApp-friendly (strip markdown noise).
+func sanitizeReply(text string) string {
+	if text == "" {
+		return ""
+	}
+	// Remove code fences
+	text = regexp.MustCompile("(?s)```.*?```").ReplaceAllString(text, "")
+	// Remove headings ###
+	text = regexp.MustCompile(`(?m)^#{1,6}\s*`).ReplaceAllString(text, "")
+	// Bullet points
+	text = regexp.MustCompile(`(?m)^\s*[-*]\s+`).ReplaceAllString(text, "• ")
+	// Collapse multiple blank lines
+	text = regexp.MustCompile(`\n{3,}`).ReplaceAllString(text, "\n\n")
+	return strings.TrimSpace(text)
 }
 
 func (u *AgentUsecase) acquire(agentID string, ctx context.Context) error {
