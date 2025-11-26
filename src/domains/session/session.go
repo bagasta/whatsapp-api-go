@@ -20,6 +20,8 @@ type CreateSessionRequest struct {
 	AgentID   string `json:"agentId"`
 	AgentName string `json:"agentName"`
 	ApiKey    string `json:"apikey"`
+	// EndpointUrlRun overrides the AI endpoint; default is AI_BACKEND_URL/agents/{agentId}/execute
+	EndpointUrlRun string `json:"endpointUrlRun"`
 }
 
 type CreateSessionResponse struct {

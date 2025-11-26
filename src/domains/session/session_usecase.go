@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
@@ -37,13 +39,18 @@ func (u *SessionUsecase) CreateSession(request CreateSessionRequest) (*CreateSes
 		}
 	}
 
+	endpointURL := request.EndpointUrlRun
+	if endpointURL == "" {
+		endpointURL = fmt.Sprintf("%s/agents/%s/execute", config.AiBackendURL, request.AgentID)
+	}
+
 	// 2. Upsert DB
 	user := &WhatsappUser{
 		UserID:         request.UserID,
 		AgentID:        request.AgentID,
 		AgentName:      request.AgentName,
 		ApiKey:         apiKeyStr,
-		EndpointUrlRun: "", // Default or from config
+		EndpointUrlRun: endpointURL,
 		Status:         "awaiting_qr",
 		UpdatedAt:      time.Now(),
 	}
@@ -176,10 +183,11 @@ func (u *SessionUsecase) ReconnectSession(agentID string) (*CreateSessionRespons
 	u.clientManager.DeleteClient(agentID)
 
 	req := CreateSessionRequest{
-		UserID:    user.UserID,
-		AgentID:   user.AgentID,
-		AgentName: user.AgentName,
-		ApiKey:    user.ApiKey,
+		UserID:         user.UserID,
+		AgentID:        user.AgentID,
+		AgentName:      user.AgentName,
+		ApiKey:         user.ApiKey,
+		EndpointUrlRun: user.EndpointUrlRun,
 	}
 
 	return u.CreateSession(req)

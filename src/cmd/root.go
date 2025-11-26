@@ -114,6 +114,17 @@ func initEnvConfig() {
 		config.AppTrustedProxies = proxies
 	}
 
+	// Chat storage settings
+	if envChatStorageURI := viper.GetString("chat_storage_uri"); envChatStorageURI != "" {
+		config.ChatStorageURI = envChatStorageURI
+	}
+	if viper.IsSet("chat_storage_enable_foreign_keys") {
+		config.ChatStorageEnableForeignKeys = viper.GetBool("chat_storage_enable_foreign_keys")
+	}
+	if viper.IsSet("chat_storage_enable_wal") {
+		config.ChatStorageEnableWAL = viper.GetBool("chat_storage_enable_wal")
+	}
+
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
 		config.DBURI = envDBURI
@@ -186,6 +197,26 @@ func initFlags() {
 		"trusted-proxies", "",
 		config.AppTrustedProxies,
 		`trusted proxy IP ranges for reverse proxy deployments --trusted-proxies <string> | example: --trusted-proxies="0.0.0.0/0" or --trusted-proxies="10.0.0.0/8,172.16.0.0/12"`,
+	)
+
+	// Chat storage flags
+	rootCmd.PersistentFlags().StringVar(
+		&config.ChatStorageURI,
+		"chat-storage-uri",
+		config.ChatStorageURI,
+		`database uri for chat/session storage (default sqlite at storages/chatstorage.db). example: --chat-storage-uri="postgres://user:password@localhost:5432/whatsapp_db?sslmode=disable"`,
+	)
+	rootCmd.PersistentFlags().BoolVar(
+		&config.ChatStorageEnableForeignKeys,
+		"chat-storage-enable-foreign-keys",
+		config.ChatStorageEnableForeignKeys,
+		`enable SQLite foreign keys for chat/session storage --chat-storage-enable-foreign-keys=<true/false>`,
+	)
+	rootCmd.PersistentFlags().BoolVar(
+		&config.ChatStorageEnableWAL,
+		"chat-storage-enable-wal",
+		config.ChatStorageEnableWAL,
+		`enable SQLite WAL mode for chat/session storage --chat-storage-enable-wal=<true/false>`,
 	)
 
 	// Database flags

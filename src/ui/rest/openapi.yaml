@@ -2688,6 +2688,9 @@ components:
         apikey:
           type: string
           description: Optional override when api_keys table is empty
+        endpointUrlRun:
+          type: string
+          description: Optional AI endpoint override (default AI_BACKEND_URL/agents/{agentId}/execute)
     CreateSessionResponse:
       type: object
       properties:
