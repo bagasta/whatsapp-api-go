@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css"
+          href="https://cdnjs.cloudflare.com/ajax/libs/fomantic-ui/2.8.8/semantic.min.css">
+    <link rel="stylesheet" href="{{ .AppBasePath }}/assets/app.css">
+    <title>Admin Dashboard - WhatsApp API {{ .AppVersion }}</title>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fomantic-ui/2.8.8/semantic.min.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios@1.1.2/dist/axios.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+</head>
+<body class="admin-body">
+<div class="ui container" id="app">
+    <div class="main-header">
+        <h1 class="ui header center aligned">
+            <div class="title-container">
+                <img src="{{ .AppBasePath }}/assets/gowa.svg" alt="GoWA Logo">
+                <span>Admin Dashboard</span>
+                <div class="version-label">{{ .AppVersion }}</div>
+            </div>
+        </h1>
+        <div class="ui tiny basic buttons">
+            <a class="ui button" href="{{ .AppBasePath }}/">Home</a>
+            <a class="ui button" href="{{ .AppBasePath }}/swagger">Swagger</a>
+        </div>
+    </div>
+
+    <admin-webhook @saved="handleSaved"></admin-webhook>
+</div>
+
+<script>
+    window.showErrorInfo = (message) => {
+        $('body').toast({
+            position: 'bottom right',
+            title: 'Error',
+            message: message,
+            showProgress: 'bottom',
+            classProgress: 'red'
+        });
+    }
+    window.showSuccessInfo = (message) => {
+        $('body').toast({
+            position: 'bottom right',
+            title: 'Success',
+            message: message,
+            showProgress: 'bottom',
+            classProgress: 'green'
+        });
+    }
+    window.http = axios.create({
+        baseURL: `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}{{ .AppBasePath }}`
+    });
+    {{ if isEnableBasicAuth .BasicAuthToken }}
+    window.http.defaults.headers.common['Authorization'] = "{{ .BasicAuthToken }}";
+    {{ end }}
+</script>
+<script type="module">
+    import AdminWebhook from "{{ .AppBasePath }}/components/AdminWebhook.js";
+
+    const app = Vue.createApp({
+        components: { AdminWebhook },
+        methods: {
+            handleSaved() {
+                // Placeholder for future use (audit log, etc.)
+            }
+        },
+        mounted() {
+            document.getElementById('app').style.display = 'block';
+        }
+    });
+
+    app.mount('#app');
+</script>
+</body>
+</html>

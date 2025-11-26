@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -17,16 +18,19 @@ import (
 )
 
 // forwardMessageToWebhook is a helper function to forward message event to webhook url
-func forwardMessageToWebhook(ctx context.Context, evt *events.Message) error {
-	payload, err := createMessagePayload(ctx, evt)
+func forwardMessageToWebhook(ctx context.Context, agentID string, evt *events.Message, client *whatsmeow.Client) error {
+	payload, err := createMessagePayload(ctx, evt, client)
 	if err != nil {
 		return err
 	}
 
-	return forwardPayloadToConfiguredWebhooks(ctx, payload, "message event")
+	return forwardPayloadToConfiguredWebhooks(ctx, payload, "message event", agentID)
 }
 
-func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]any, error) {
+func createMessagePayload(ctx context.Context, evt *events.Message, client *whatsmeow.Client) (map[string]any, error) {
+	if client == nil {
+		return nil, fmt.Errorf("client unavailable")
+	}
 	message := utils.BuildEventMessage(evt)
 	waReaction := utils.BuildEventReaction(evt)
 	forwarded := utils.BuildForwarded(evt)
@@ -50,12 +54,8 @@ func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]
 			lid, err := types.ParseJID(from_user)
 			if err != nil {
 				logrus.Errorf("Error when parse jid: %v", err)
-			} else {
-				pn, err := cli.Store.LIDs.GetPNForLID(ctx, lid)
-				if err != nil {
-					logrus.Errorf("Error when get pn for lid %s: %v", lid.String(), err)
-				}
-				if !pn.IsEmpty() {
+			} else if client.Store != nil && client.Store.LIDs != nil {
+				if pn, err := client.Store.LIDs.GetPNForLID(ctx, lid); err == nil && !pn.IsEmpty() {
 					if from_group != "" {
 						body["from"] = fmt.Sprintf("%s in %s", pn.String(), from_group)
 					} else {
@@ -75,12 +75,8 @@ func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]
 			lid, err := types.ParseJID(tag[1:] + "@lid")
 			if err != nil {
 				logrus.Errorf("Error when parse jid: %v", err)
-			} else {
-				pn, err := cli.Store.LIDs.GetPNForLID(ctx, lid)
-				if err != nil {
-					logrus.Errorf("Error when get pn for lid %s: %v", lid.String(), err)
-				}
-				if !pn.IsEmpty() {
+			} else if client.Store != nil && client.Store.LIDs != nil {
+				if pn, err := client.Store.LIDs.GetPNForLID(ctx, lid); err == nil && !pn.IsEmpty() {
 					message.Text = strings.Replace(message.Text, tag, fmt.Sprintf("@%s", pn.User), -1)
 				}
 			}
@@ -135,7 +131,7 @@ func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]
 
 	if audioMedia := evt.Message.GetAudioMessage(); audioMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
-			path, err := utils.ExtractMedia(ctx, cli, config.PathMedia, audioMedia)
+			path, err := utils.ExtractMedia(ctx, client, config.PathMedia, audioMedia)
 			if err != nil {
 				logrus.Errorf("Failed to download audio from %s: %v", evt.Info.SourceString(), err)
 				return nil, pkgError.WebhookError(fmt.Sprintf("Failed to download audio: %v", err))
@@ -154,7 +150,7 @@ func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]
 
 	if documentMedia := evt.Message.GetDocumentMessage(); documentMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
-			path, err := utils.ExtractMedia(ctx, cli, config.PathMedia, documentMedia)
+			path, err := utils.ExtractMedia(ctx, client, config.PathMedia, documentMedia)
 			if err != nil {
 				logrus.Errorf("Failed to download document from %s: %v", evt.Info.SourceString(), err)
 				return nil, pkgError.WebhookError(fmt.Sprintf("Failed to download document: %v", err))
@@ -170,7 +166,7 @@ func createMessagePayload(ctx context.Context, evt *events.Message) (map[string]
 
 	if imageMedia := evt.Message.GetImageMessage(); imageMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
-			path, err := utils.ExtractMedia(ctx, cli, config.PathMedia, imageMedia)
+			path, err := utils.ExtractMedia(ctx, client, config.PathMedia, imageMedia)
 			if err != nil {
 				logrus.Errorf("Failed to download image from %s: %v", evt.Info.SourceString(), err)
 				return nil, pkgError.WebhookError(fmt.Sprintf("Failed to download image: %v", err))

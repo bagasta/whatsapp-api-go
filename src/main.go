@@ -5,7 +5,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/cmd"
 )
 
-//go:embed views/index.html
+//go:embed views/index.html views/admin.html
 var embedIndex embed.FS
 
 //go:embed views

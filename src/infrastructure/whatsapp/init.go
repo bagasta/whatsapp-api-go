@@ -151,7 +151,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	cli.AutoTrustIdentity = true
 
 	cli.AddEventHandler(func(rawEvt interface{}) {
-		handler(ctx, rawEvt, chatStorageRepo, "")
+		handler(ctx, rawEvt, chatStorageRepo, "", cli)
 	})
 
 	return cli
@@ -451,7 +451,7 @@ func handleRemoteLogout(ctx context.Context, chatStorageRepo domainChatStorage.I
 }
 
 // handler is the main event handler for WhatsApp events
-func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.IChatStorageRepository, agentID string) {
+func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.IChatStorageRepository, agentID string, client *whatsmeow.Client) {
 	switch evt := rawEvt.(type) {
 	case *events.DeleteForMe:
 		handleDeleteForMe(ctx, agentID, evt, chatStorageRepo)
@@ -466,17 +466,17 @@ func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.
 	case *events.StreamReplaced:
 		handleStreamReplaced(ctx)
 	case *events.Message:
-		handleMessage(ctx, agentID, evt, chatStorageRepo)
+		handleMessage(ctx, agentID, evt, chatStorageRepo, client)
 	case *events.Receipt:
-		handleReceipt(ctx, evt)
+		handleReceipt(ctx, agentID, evt)
 	case *events.Presence:
 		handlePresence(ctx, evt)
 	case *events.HistorySync:
-		handleHistorySync(ctx, evt, chatStorageRepo)
+		handleHistorySync(ctx, agentID, evt, chatStorageRepo)
 	case *events.AppState:
 		handleAppState(ctx, evt)
 	case *events.GroupInfo:
-		handleGroupInfo(ctx, evt)
+		handleGroupInfo(ctx, agentID, evt)
 	}
 }
 
@@ -505,13 +505,11 @@ func handleDeleteForMe(ctx context.Context, agentID string, evt *events.DeleteFo
 	}
 
 	// Send webhook notification for delete event
-	if len(config.WhatsappWebhook) > 0 {
-		go func() {
-			if err := forwardDeleteToWebhook(ctx, evt, message); err != nil {
-				log.Errorf("Failed to forward delete event to webhook: %v", err)
-			}
-		}()
-	}
+	go func() {
+		if err := forwardDeleteToWebhook(ctx, agentID, evt, message); err != nil {
+			log.Errorf("Failed to forward delete event to webhook: %v", err)
+		}
+	}()
 }
 
 func handleAppStateSyncComplete(_ context.Context, evt *events.AppStateSyncComplete) {
@@ -564,7 +562,7 @@ func handleStreamReplaced(_ context.Context) {
 	os.Exit(0)
 }
 
-func handleMessage(ctx context.Context, agentID string, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handleMessage(ctx context.Context, agentID string, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository, client *whatsmeow.Client) {
 	metrics.IncMessagesReceived()
 	// Log message metadata
 	metaParts := buildMessageMetaParts(evt)
@@ -590,7 +588,7 @@ func handleMessage(ctx context.Context, agentID string, evt *events.Message, cha
 	handleAutoReply(ctx, evt, chatStorageRepo)
 
 	// Forward to webhook if configured
-	handleWebhookForward(ctx, evt)
+	handleWebhookForward(ctx, agentID, evt, client)
 
 	// Auto-forward to AI if callback is set and agent context exists
 	if agentID != "" && agentForwarder != nil {
@@ -753,7 +751,7 @@ func handleAutoReply(ctx context.Context, evt *events.Message, chatStorageRepo d
 	}
 }
 
-func handleWebhookForward(ctx context.Context, evt *events.Message) {
+func handleWebhookForward(ctx context.Context, agentID string, evt *events.Message, client *whatsmeow.Client) {
 	// Skip webhook for specific protocol messages that shouldn't trigger webhooks
 	if protocolMessage := evt.Message.GetProtocolMessage(); protocolMessage != nil {
 		protocolType := protocolMessage.GetType().String()
@@ -764,17 +762,16 @@ func handleWebhookForward(ctx context.Context, evt *events.Message) {
 		}
 	}
 
-	if len(config.WhatsappWebhook) > 0 &&
-		!strings.Contains(evt.Info.SourceString(), "broadcast") {
+	if !strings.Contains(evt.Info.SourceString(), "broadcast") {
 		go func(evt *events.Message) {
-			if err := forwardMessageToWebhook(ctx, evt); err != nil {
+			if err := forwardMessageToWebhook(ctx, agentID, evt, client); err != nil {
 				logrus.Error("Failed forward to webhook: ", err)
 			}
 		}(evt)
 	}
 }
 
-func handleReceipt(ctx context.Context, evt *events.Receipt) {
+func handleReceipt(ctx context.Context, agentID string, evt *events.Receipt) {
 	sendReceipt := false
 	switch evt.Type {
 	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
@@ -787,9 +784,9 @@ func handleReceipt(ctx context.Context, evt *events.Receipt) {
 
 	// Forward receipt (ack) event to webhook if configured
 	// Note: Receipt events are not rate limited as they are critical for message delivery status
-	if len(config.WhatsappWebhook) > 0 && sendReceipt {
+	if sendReceipt {
 		go func(e *events.Receipt) {
-			if err := forwardReceiptToWebhook(ctx, e); err != nil {
+			if err := forwardReceiptToWebhook(ctx, agentID, e); err != nil {
 				logrus.Errorf("Failed to forward ack event to webhook: %v", err)
 			}
 		}(evt)
@@ -808,12 +805,16 @@ func handlePresence(_ context.Context, evt *events.Presence) {
 	}
 }
 
-func handleHistorySync(ctx context.Context, evt *events.HistorySync, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handleHistorySync(ctx context.Context, agentID string, evt *events.HistorySync, chatStorageRepo domainChatStorage.IChatStorageRepository) {
 	id := atomic.AddInt32(&historySyncID, 1)
+	storeID := agentID
+	if cli != nil && cli.Store != nil && cli.Store.ID != nil {
+		storeID = cli.Store.ID.String()
+	}
 	fileName := fmt.Sprintf("%s/history-%d-%s-%d-%s.json",
 		config.PathStorages,
 		startupTime,
-		cli.Store.ID.String(),
+		storeID,
 		id,
 		evt.Data.SyncType.String(),
 	)
@@ -1052,7 +1053,7 @@ func processPushNames(_ context.Context, data *waHistorySync.HistorySync, chatSt
 	return nil
 }
 
-func handleGroupInfo(ctx context.Context, evt *events.GroupInfo) {
+func handleGroupInfo(ctx context.Context, agentID string, evt *events.GroupInfo) {
 	// Only process events that have actual changes
 	hasChanges := len(evt.Join) > 0 || len(evt.Leave) > 0 || len(evt.Promote) > 0 || len(evt.Demote) > 0 ||
 		evt.Name != nil || evt.Topic != nil || evt.Locked != nil || evt.Announce != nil
@@ -1076,11 +1077,9 @@ func handleGroupInfo(ctx context.Context, evt *events.GroupInfo) {
 	}
 
 	// Forward group info event to webhook if configured
-	if len(config.WhatsappWebhook) > 0 {
-		go func(e *events.GroupInfo) {
-			if err := forwardGroupInfoToWebhook(ctx, e); err != nil {
-				logrus.Errorf("Failed to forward group info event to webhook: %v", err)
-			}
-		}(evt)
-	}
+	go func(e *events.GroupInfo) {
+		if err := forwardGroupInfoToWebhook(ctx, agentID, e); err != nil {
+			logrus.Errorf("Failed to forward group info event to webhook: %v", err)
+		}
+	}(evt)
 }

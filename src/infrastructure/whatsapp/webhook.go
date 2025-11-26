@@ -9,13 +9,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/sirupsen/logrus"
 )
 
-func submitWebhook(ctx context.Context, payload map[string]any, url string) error {
+func submitWebhook(ctx context.Context, payload map[string]any, url, secret string) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	postBody, err := json.Marshal(payload)
@@ -28,7 +27,7 @@ func submitWebhook(ctx context.Context, payload map[string]any, url string) erro
 		return pkgError.WebhookError(fmt.Sprintf("error when create http object %v", err))
 	}
 
-	secretKey := []byte(config.WhatsappWebhookSecret)
+	secretKey := []byte(secret)
 	signature, err := utils.GetMessageDigestOrSignature(postBody, secretKey)
 	if err != nil {
 		return pkgError.WebhookError(fmt.Sprintf("error when create signature %v", err))

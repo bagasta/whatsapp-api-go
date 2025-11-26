@@ -98,3 +98,32 @@ func (r *SessionRepository) FindByAgentID(agentID string) (*session.WhatsappUser
 	}
 	return &user, nil
 }
+
+func (r *SessionRepository) List() ([]*session.WhatsappUser, error) {
+	rows, err := r.db.Query(`SELECT user_id, agent_id, agent_name, api_key, endpoint_url_run, status, last_connected_at, last_disconnected_at, created_at, updated_at FROM whatsapp_user ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*session.WhatsappUser
+	for rows.Next() {
+		var user session.WhatsappUser
+		if err := rows.Scan(
+			&user.UserID,
+			&user.AgentID,
+			&user.AgentName,
+			&user.ApiKey,
+			&user.EndpointUrlRun,
+			&user.Status,
+			&user.LastConnectedAt,
+			&user.LastDisconnectedAt,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, &user)
+	}
+	return result, nil
+}

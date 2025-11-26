@@ -58,6 +58,7 @@ type ISessionRepository interface {
 	FindOne(userID, agentID string) (*WhatsappUser, error)
 	FindByAgentID(agentID string) (*WhatsappUser, error)
 	Delete(userID, agentID string) error
+	List() ([]*WhatsappUser, error)
 }
 
 type ISessionUsecase interface {

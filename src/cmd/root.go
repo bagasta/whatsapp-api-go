@@ -22,6 +22,7 @@ import (
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	domainSession "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
+	domainWebhook "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/webhook"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/database"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/repository"
@@ -34,9 +35,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/types/events"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 var (
@@ -54,6 +55,7 @@ var (
 	// Repositories
 	sessionRepo repository.SessionRepository
 	apiKeyRepo  repository.ApiKeyRepository
+	webhookRepo repository.WebhookConfigRepository
 
 	// Usecase
 	appUsecase        domainApp.IAppUsecase
@@ -65,7 +67,36 @@ var (
 	newsletterUsecase domainNewsletter.INewsletterUsecase
 	sessionUsecase    domainSession.ISessionUsecase
 	agentUsecase      domainAgent.IAgentUsecase
+	webhookUsecase    domainWebhook.IWebhookConfigUsecase
 )
+
+// reconnectExistingSessions initializes clients for all stored sessions and attempts to connect them.
+func reconnectExistingSessions(ctx context.Context, cm *whatsapp.ClientManager, repo domainSession.ISessionRepository) {
+	sessions, err := repo.List()
+	if err != nil {
+		logrus.Warnf("failed to list sessions for auto-reconnect: %v", err)
+		return
+	}
+
+	for _, s := range sessions {
+		agentID := s.AgentID
+		go func(agent string) {
+			client, err := cm.CreateClient(ctx, agent)
+			if err != nil {
+				logrus.Warnf("auto-reconnect: create client failed for agent %s: %v", agent, err)
+				return
+			}
+			if client.IsConnected() {
+				return
+			}
+			if err := client.Connect(); err != nil {
+				logrus.Warnf("auto-reconnect: connect failed for agent %s: %v", agent, err)
+			} else {
+				logrus.Infof("auto-reconnect: agent %s connected", agent)
+			}
+		}(agentID)
+	}
+}
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -331,8 +362,18 @@ func initApp() {
 		logrus.Fatalf("failed to initialize chat storage: %v", err)
 	}
 
-	chatStorageRepo = chatstorage.NewStorageRepository(chatStorageDB)
-	chatStorageRepo.InitializeSchema()
+	isChatPostgres := strings.HasPrefix(config.ChatStorageURI, "postgres://") || strings.HasPrefix(config.ChatStorageURI, "postgresql://")
+	chatStorageRepo = chatstorage.NewStorageRepository(chatStorageDB, isChatPostgres)
+	if err := chatStorageRepo.InitializeSchema(); err != nil {
+		logrus.Fatalf("failed to initialize chat storage schema: %v", err)
+	}
+
+	webhookRepo = *repository.NewWebhookConfigRepository(chatStorageDB).(*repository.WebhookConfigRepository)
+	webhookUsecase = domainWebhook.NewWebhookConfigUsecase(&webhookRepo, &sessionRepo)
+	if err := webhookUsecase.SyncRuntimeConfig(); err != nil {
+		logrus.Warnf("failed to sync webhook config from DB: %v", err)
+	}
+	whatsapp.SetWebhookResolver(webhookUsecase.ResolveWebhooks)
 
 	whatsappDB := whatsapp.InitWaDB(ctx, config.DBURI)
 	var keysDB *sqlstore.Container
@@ -359,6 +400,9 @@ func initApp() {
 	newsletterUsecase = usecase.NewNewsletterService()
 	sessionUsecase = domainSession.NewSessionUsecase(&sessionRepo, &apiKeyRepo, clientManager)
 	agentUsecase = domainAgent.NewAgentUsecase(&sessionRepo, &apiKeyRepo, clientManager)
+
+	// Auto-reconnect previously saved sessions
+	reconnectExistingSessions(ctx, clientManager, &sessionRepo)
 
 	// Auto-forward inbound messages to AI for multi-agent clients
 	whatsapp.SetAgentForwarder(func(agentID string, evt *events.Message) {

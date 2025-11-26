@@ -9,6 +9,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/admin"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/agent"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
@@ -98,7 +99,12 @@ func restServer(_ *cobra.Command, _ []string) {
 				strings.HasPrefix(path, config.AppBasePath+"/health") ||
 				strings.HasPrefix(path, config.AppBasePath+"/metrics") ||
 				strings.HasPrefix(path, config.AppBasePath+"/sessions") ||
-				strings.HasPrefix(path, config.AppBasePath+"/agents") {
+				strings.HasPrefix(path, config.AppBasePath+"/agents") ||
+				strings.HasPrefix(path, config.AppBasePath+"/assets") ||
+				strings.HasPrefix(path, config.AppBasePath+"/components") ||
+				strings.HasPrefix(path, config.AppBasePath+"/admin") ||
+				path == config.AppBasePath+"/" ||
+				path == config.AppBasePath {
 				return c.Next()
 			}
 			return protected(c)
@@ -119,6 +125,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	rest.InitRestMessage(apiGroup, messageUsecase)
 	rest.InitRestGroup(apiGroup, groupUsecase)
 	rest.InitRestNewsletter(apiGroup, newsletterUsecase)
+	admin.InitRoutes(apiGroup, webhookUsecase)
 
 	// Swagger UI for API documentation
 	rest.InitSwagger(apiGroup)
@@ -135,6 +142,13 @@ func restServer(_ *cobra.Command, _ []string) {
 			"BasicAuthToken": c.UserContext().Value(middleware.AuthorizationValue("BASIC_AUTH")),
 			"MaxFileSize":    humanize.Bytes(uint64(config.WhatsappSettingMaxFileSize)),
 			"MaxVideoSize":   humanize.Bytes(uint64(config.WhatsappSettingMaxVideoSize)),
+		})
+	})
+	apiGroup.Get("/admin", func(c *fiber.Ctx) error {
+		return c.Render("views/admin", fiber.Map{
+			"AppVersion":     config.AppVersion,
+			"AppBasePath":    config.AppBasePath,
+			"BasicAuthToken": c.UserContext().Value(middleware.AuthorizationValue("BASIC_AUTH")),
 		})
 	})
 

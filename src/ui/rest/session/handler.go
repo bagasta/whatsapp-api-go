@@ -170,10 +170,20 @@ func (h *Handler) GetQR(c *fiber.Ctx) error {
 
 	resp, err := h.usecase.GetQR(agentID)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
+		msg := err.Error()
+		code := "INTERNAL_ERROR"
+		status := 500
+		if strings.Contains(strings.ToLower(msg), "not found") {
+			code = "SESSION_NOT_FOUND"
+			status = 404
+		} else if strings.Contains(strings.ToLower(msg), "already logged in") {
+			code = "SESSION_ALREADY_LOGGED_IN"
+			status = 409
+		}
+		return c.Status(status).JSON(fiber.Map{
 			"error": fiber.Map{
-				"code":    "INTERNAL_ERROR",
-				"message": err.Error(),
+				"code":    code,
+				"message": msg,
 			},
 		})
 	}

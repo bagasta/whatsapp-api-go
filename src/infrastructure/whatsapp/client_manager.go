@@ -101,7 +101,7 @@ func (cm *ClientManager) CreateClient(ctx context.Context, agentID string) (*wha
 	// Add Event Handler
 	client.AddEventHandler(func(rawEvt interface{}) {
 		// include agentID to avoid cross-agent conflicts and enable per-agent hooks
-		handler(ctx, rawEvt, cm.chatStorage, agentID)
+		handler(ctx, rawEvt, cm.chatStorage, agentID, client)
 	})
 
 	cm.clients[agentID] = client

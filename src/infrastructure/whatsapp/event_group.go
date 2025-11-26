@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -50,8 +49,16 @@ func jidsToStrings(jids []types.JID) []string {
 }
 
 // forwardGroupInfoToWebhook forwards group information events to the configured webhook URLs
-func forwardGroupInfoToWebhook(ctx context.Context, evt *events.GroupInfo) error {
-	logrus.Infof("Forwarding group info event to %d configured webhook(s)", len(config.WhatsappWebhook))
+func forwardGroupInfoToWebhook(ctx context.Context, agentID string, evt *events.GroupInfo) error {
+	urls, secret := webhookResolver(agentID)
+	valid := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if strings.TrimSpace(u) != "" {
+			valid = append(valid, u)
+		}
+	}
+
+	logrus.Infof("Forwarding group info event for agent %s to %d configured webhook(s)", agentID, len(valid))
 
 	// Send separate webhook events for each action type
 	actions := []struct {
@@ -70,14 +77,14 @@ func forwardGroupInfoToWebhook(ctx context.Context, evt *events.GroupInfo) error
 
 			// Collect errors from all webhook URLs instead of failing fast
 			var errors []error
-			for _, url := range config.WhatsappWebhook {
-				if err := submitWebhook(ctx, payload, url); err != nil {
+			for _, url := range valid {
+				if err := submitWebhook(ctx, payload, url, secret); err != nil {
 					errors = append(errors, fmt.Errorf("webhook %s failed: %w", url, err))
 				}
 			}
 
 			// If all webhooks failed, return combined error
-			if len(errors) == len(config.WhatsappWebhook) && len(errors) > 0 {
+			if len(errors) == len(valid) && len(errors) > 0 {
 				var errMessages []string
 				for _, err := range errors {
 					errMessages = append(errMessages, err.Error())

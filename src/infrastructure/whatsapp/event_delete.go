@@ -9,13 +9,13 @@ import (
 )
 
 // forwardDeleteToWebhook sends a delete event to webhook
-func forwardDeleteToWebhook(ctx context.Context, evt *events.DeleteForMe, message *domainChatStorage.Message) error {
+func forwardDeleteToWebhook(ctx context.Context, agentID string, evt *events.DeleteForMe, message *domainChatStorage.Message) error {
 	payload, err := createDeletePayload(ctx, evt, message)
 	if err != nil {
 		return err
 	}
 
-	return forwardPayloadToConfiguredWebhooks(ctx, payload, "delete event")
+	return forwardPayloadToConfiguredWebhooks(ctx, payload, "delete event", agentID)
 }
 
 // createDeletePayload creates a webhook payload for delete events

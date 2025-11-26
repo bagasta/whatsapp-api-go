@@ -9,6 +9,7 @@ import (
 
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
+	"github.com/jmoiron/sqlx"
 	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -16,12 +17,45 @@ import (
 
 // SQLiteRepository implements Repository using SQLite
 type SQLiteRepository struct {
-	db *sql.DB
+	db         *sql.DB
+	isPostgres bool
+}
+
+// helper to rebind placeholders when using Postgres
+func (r *SQLiteRepository) rebind(query string) string {
+	if r.isPostgres {
+		return sqlx.Rebind(sqlx.DOLLAR, query)
+	}
+	return query
+}
+
+func (r *SQLiteRepository) exec(query string, args ...any) (sql.Result, error) {
+	return r.db.Exec(r.rebind(query), args...)
+}
+
+func (r *SQLiteRepository) query(query string, args ...any) (*sql.Rows, error) {
+	return r.db.Query(r.rebind(query), args...)
+}
+
+func (r *SQLiteRepository) queryRow(query string, args ...any) *sql.Row {
+	return r.db.QueryRow(r.rebind(query), args...)
+}
+
+func (r *SQLiteRepository) txExec(tx *sql.Tx, query string, args ...any) (sql.Result, error) {
+	return tx.Exec(r.rebind(query), args...)
+}
+
+func (r *SQLiteRepository) txQuery(tx *sql.Tx, query string, args ...any) (*sql.Rows, error) {
+	return tx.Query(r.rebind(query), args...)
+}
+
+func (r *SQLiteRepository) txQueryRow(tx *sql.Tx, query string, args ...any) *sql.Row {
+	return tx.QueryRow(r.rebind(query), args...)
 }
 
 // NewSQLiteRepository creates a new SQLite repository
-func NewStorageRepository(db *sql.DB) domainChatStorage.IChatStorageRepository {
-	return &SQLiteRepository{db: db}
+func NewStorageRepository(db *sql.DB, isPostgres bool) domainChatStorage.IChatStorageRepository {
+	return &SQLiteRepository{db: db, isPostgres: isPostgres}
 }
 
 // StoreChat creates or updates a chat
@@ -39,7 +73,7 @@ func (r *SQLiteRepository) StoreChat(chat *domainChatStorage.Chat) error {
 			updated_at = excluded.updated_at
 	`
 
-	_, err := r.db.Exec(query, chat.JID, chat.Name, chat.LastMessageTime, chat.EphemeralExpiration, now, chat.UpdatedAt)
+	_, err := r.exec(query, chat.JID, chat.Name, chat.LastMessageTime, chat.EphemeralExpiration, now, chat.UpdatedAt)
 	return err
 }
 
@@ -51,7 +85,7 @@ func (r *SQLiteRepository) GetChat(jid string) (*domainChatStorage.Chat, error) 
 		WHERE jid = ?
 	`
 
-	chat, err := r.scanChat(r.db.QueryRow(query, jid))
+	chat, err := r.scanChat(r.queryRow(query, jid))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -71,7 +105,7 @@ func (r *SQLiteRepository) GetMessageByID(id string) (*domainChatStorage.Message
 		LIMIT 1
 	`
 
-	message, err := r.scanMessage(r.db.QueryRow(query, id))
+	message, err := r.scanMessage(r.queryRow(query, id))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -120,7 +154,7 @@ func (r *SQLiteRepository) GetChats(filter *domainChatStorage.ChatFilter) ([]*do
 		}
 	}
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -147,13 +181,13 @@ func (r *SQLiteRepository) DeleteChat(jid string) error {
 	defer tx.Rollback()
 
 	// Delete messages first (foreign key constraint)
-	_, err = tx.Exec("DELETE FROM messages WHERE chat_jid = ?", jid)
+	_, err = r.txExec(tx, "DELETE FROM messages WHERE chat_jid = ?", jid)
 	if err != nil {
 		return err
 	}
 
 	// Delete chat
-	_, err = tx.Exec("DELETE FROM chats WHERE jid = ?", jid)
+	_, err = r.txExec(tx, "DELETE FROM chats WHERE jid = ?", jid)
 	if err != nil {
 		return err
 	}
@@ -194,7 +228,7 @@ func (r *SQLiteRepository) StoreMessage(message *domainChatStorage.Message) erro
 			updated_at = excluded.updated_at
 	`
 
-	_, err := r.db.Exec(query,
+	_, err := r.exec(query,
 		message.ID, message.ChatJID, message.Sender, message.Content,
 		message.Timestamp, message.IsFromMe, message.MediaType, message.Filename,
 		message.URL, message.MediaKey, message.FileSHA256, message.FileEncSHA256,
@@ -217,7 +251,7 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 	defer tx.Rollback()
 
 	// Prepare the statement once for better performance
-	stmt, err := tx.Prepare(`
+	stmt, err := tx.Prepare(r.rebind(`
 		INSERT INTO messages (
 			id, chat_jid, sender, content, timestamp, is_from_me, 
 			media_type, filename, url, media_key, file_sha256, 
@@ -236,7 +270,7 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 			file_enc_sha256 = excluded.file_enc_sha256,
 			file_length = excluded.file_length,
 			updated_at = excluded.updated_at
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
@@ -317,7 +351,7 @@ func (r *SQLiteRepository) GetMessages(filter *domainChatStorage.MessageFilter) 
 		}
 	}
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +406,7 @@ func (r *SQLiteRepository) SearchMessages(chatJID, searchText string, limit int)
 		args = append(args, limit)
 	}
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search messages: %w", err)
 	}
@@ -396,14 +430,14 @@ func (r *SQLiteRepository) SearchMessages(chatJID, searchText string, limit int)
 
 // DeleteMessage deletes a specific message
 func (r *SQLiteRepository) DeleteMessage(id, chatJID string) error {
-	_, err := r.db.Exec("DELETE FROM messages WHERE id = ? AND chat_jid = ?", id, chatJID)
+	_, err := r.exec("DELETE FROM messages WHERE id = ? AND chat_jid = ?", id, chatJID)
 	return err
 }
 
 // getCount is a private helper for count queries
 func (r *SQLiteRepository) getCount(query string, args ...any) (int64, error) {
 	var count int64
-	err := r.db.QueryRow(query, args...).Scan(&count)
+	err := r.queryRow(query, args...).Scan(&count)
 	return count, err
 }
 
@@ -454,13 +488,13 @@ func (r *SQLiteRepository) TruncateAllChats() error {
 	defer tx.Rollback()
 
 	// Delete messages first (foreign key constraint)
-	_, err = tx.Exec("DELETE FROM messages")
+	_, err = r.txExec(tx, "DELETE FROM messages")
 	if err != nil {
 		return fmt.Errorf("failed to delete messages: %w", err)
 	}
 
 	// Delete chats
-	_, err = tx.Exec("DELETE FROM chats")
+	_, err = r.txExec(tx, "DELETE FROM chats")
 	if err != nil {
 		return fmt.Errorf("failed to delete chats: %w", err)
 	}
@@ -732,7 +766,7 @@ func (r *SQLiteRepository) getSchemaVersion() (int, error) {
 
 	// Get current version
 	var version int
-	err = r.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_info").Scan(&version)
+	err = r.queryRow("SELECT COALESCE(MAX(version), 0) FROM schema_info").Scan(&version)
 	if err != nil {
 		return 0, err
 	}
@@ -749,12 +783,16 @@ func (r *SQLiteRepository) runMigration(migration string, version int) error {
 	defer tx.Rollback()
 
 	// Execute migration
-	if _, err := tx.Exec(migration); err != nil {
+	if _, err := r.txExec(tx, migration); err != nil {
 		return err
 	}
 
-	// Update schema version
-	if _, err := tx.Exec("INSERT OR REPLACE INTO schema_info (version) VALUES (?)", version); err != nil {
+	// Update schema version (portable upsert)
+	upsert := `
+		INSERT INTO schema_info (version) VALUES (?)
+		ON CONFLICT (version) DO UPDATE SET version = EXCLUDED.version
+	`
+	if _, err := r.txExec(tx, upsert, version); err != nil {
 		return err
 	}
 
@@ -763,10 +801,52 @@ func (r *SQLiteRepository) runMigration(migration string, version int) error {
 
 // getMigrations returns all database migrations
 func (r *SQLiteRepository) getMigrations() []string {
+	if r.isPostgres {
+		return []string{
+			`
+			CREATE TABLE IF NOT EXISTS chats (
+				jid TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				last_message_time TIMESTAMPTZ NOT NULL,
+				ephemeral_expiration INTEGER DEFAULT 0,
+				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			);
+
+			CREATE TABLE IF NOT EXISTS messages (
+				id TEXT NOT NULL,
+				chat_jid TEXT NOT NULL REFERENCES chats(jid) ON DELETE CASCADE,
+				sender TEXT NOT NULL,
+				content TEXT,
+				timestamp TIMESTAMPTZ NOT NULL,
+				is_from_me BOOLEAN DEFAULT FALSE,
+				media_type TEXT,
+				filename TEXT,
+				url TEXT,
+				media_key BYTEA,
+				file_sha256 BYTEA,
+				file_enc_sha256 BYTEA,
+				file_length BIGINT DEFAULT 0,
+				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (id, chat_jid)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid);
+			CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+			CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages(media_type);
+			CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender);
+			CREATE INDEX IF NOT EXISTS idx_chats_last_message ON chats(last_message_time);
+			CREATE INDEX IF NOT EXISTS idx_chats_name ON chats(name);
+			`,
+			`
+			CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id);
+			`,
+		}
+	}
+
 	return []string{
-		// Migration 1: Initial schema with only chats and messages tables
 		`
-		-- Create chats table
 		CREATE TABLE IF NOT EXISTS chats (
 			jid TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -776,7 +856,6 @@ func (r *SQLiteRepository) getMigrations() []string {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 
-		-- Create messages table
 		CREATE TABLE IF NOT EXISTS messages (
 			id TEXT NOT NULL,
 			chat_jid TEXT NOT NULL,
@@ -797,7 +876,6 @@ func (r *SQLiteRepository) getMigrations() []string {
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
 		);
 
-		-- Create indexes for performance
 		CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages(media_type);
@@ -805,8 +883,6 @@ func (r *SQLiteRepository) getMigrations() []string {
 		CREATE INDEX IF NOT EXISTS idx_chats_last_message ON chats(last_message_time);
 		CREATE INDEX IF NOT EXISTS idx_chats_name ON chats(name);
 		`,
-
-		// Migration 2: Add index for message ID lookups (performance optimization)
 		`
 		CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id);
 		`,

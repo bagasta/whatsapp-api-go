@@ -67,7 +67,7 @@ func createReceiptPayload(evt *events.Receipt) map[string]any {
 }
 
 // forwardReceiptToWebhook forwards message acknowledgement events to the configured webhook URLs
-func forwardReceiptToWebhook(ctx context.Context, evt *events.Receipt) error {
+func forwardReceiptToWebhook(ctx context.Context, agentID string, evt *events.Receipt) error {
 	payload := createReceiptPayload(evt)
-	return forwardPayloadToConfiguredWebhooks(ctx, payload, "message ack event")
+	return forwardPayloadToConfiguredWebhooks(ctx, payload, "message ack event", agentID)
 }

@@ -34,6 +34,18 @@ func Migrate(db *sql.DB, driverName string) error {
 				is_active BOOLEAN DEFAULT TRUE,
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			);`,
+			`CREATE TABLE IF NOT EXISTS webhook_config (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				url TEXT NOT NULL,
+				secret TEXT,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE TABLE IF NOT EXISTS agent_webhook_config (
+				agent_id VARCHAR(255) PRIMARY KEY,
+				url VARCHAR(255) NOT NULL,
+				secret VARCHAR(255),
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);`,
 		}
 	} else {
 		// SQLite syntax (TIMESTAMP -> DATETIME, etc if needed, but simplified here)
@@ -56,6 +68,18 @@ func Migrate(db *sql.DB, driverName string) error {
 				access_token TEXT NOT NULL,
 				is_active BOOLEAN DEFAULT 1,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE TABLE IF NOT EXISTS webhook_config (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				url TEXT NOT NULL,
+				secret TEXT,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE TABLE IF NOT EXISTS agent_webhook_config (
+				agent_id TEXT PRIMARY KEY,
+				url TEXT NOT NULL,
+				secret TEXT,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			);`,
 		}
 	}
