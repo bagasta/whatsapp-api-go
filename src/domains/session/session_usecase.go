@@ -12,7 +12,9 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
+	"github.com/sirupsen/logrus"
 	"github.com/skip2/go-qrcode"
+	"go.mau.fi/whatsmeow"
 )
 
 type SessionUsecase struct {
@@ -26,6 +28,52 @@ func NewSessionUsecase(sessionRepo ISessionRepository, apiKeyRepo apikey.IApiKey
 		sessionRepo:   sessionRepo,
 		apiKeyRepo:    apiKeyRepo,
 		clientManager: clientManager,
+	}
+}
+
+// listenAndCacheQR connects the client and keeps caching rotating QR codes.
+// Returns the first QR code emitted or an error if none is received within the timeout.
+func (u *SessionUsecase) listenAndCacheQR(ctx context.Context, client *whatsmeow.Client, agentID string) (*QrData, error) {
+	qrChan, err := client.GetQRChannel(ctx)
+	if err != nil {
+		if errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
+			return nil, errors.New("session already saved; reconnect or logout first")
+		}
+		return nil, err
+	}
+
+	if err := client.Connect(); err != nil {
+		return nil, err
+	}
+
+	firstQR := make(chan *QrData, 1)
+	go func() {
+		defer close(firstQR)
+		for evt := range qrChan {
+			if evt.Event != "code" {
+				continue
+			}
+			png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+			encoded := base64.StdEncoding.EncodeToString(png)
+			qr := &QrData{ContentType: "image/png", Base64: encoded}
+			u.clientManager.CacheQR(agentID, qr.ContentType, qr.Base64)
+
+			// capture the first QR to return
+			select {
+			case firstQR <- qr:
+			default:
+			}
+		}
+	}()
+
+	select {
+	case qr, ok := <-firstQR:
+		if !ok || qr == nil {
+			return nil, errors.New("qr channel closed")
+		}
+		return qr, nil
+	case <-time.After(60 * time.Second):
+		return nil, errors.New("qr timeout")
 	}
 }
 
@@ -79,30 +127,28 @@ func (u *SessionUsecase) CreateSession(request CreateSessionRequest) (*CreateSes
 		return nil, err
 	}
 
+	// If store exists but not logged in, reset the agent store to avoid invalid/expired QR attempts
+	if client.Store.ID != nil && !client.IsLoggedIn() {
+		logrus.Warnf("Resetting store for agent %s before QR (store exists but not logged in)", request.AgentID)
+		if err := u.clientManager.DeleteClient(request.AgentID); err != nil {
+			logrus.Warnf("Failed to delete client for agent %s: %v", request.AgentID, err)
+		}
+		client, err = u.clientManager.CreateClient(ctx, request.AgentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 4. QR Handling
 	var qrData *QrData
 	if !client.IsConnected() {
 		if client.Store.ID == nil {
-			// No session, get QR
-			qrChan, _ := client.GetQRChannel(context.Background())
-			if err := client.Connect(); err != nil {
+			qrData, err = u.listenAndCacheQR(ctx, client, request.AgentID)
+			if err != nil {
 				return nil, err
 			}
-
-			// Wait for first QR
-			select {
-			case evt := <-qrChan:
-				if evt.Event == "code" {
-					png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
-					encoded := base64.StdEncoding.EncodeToString(png)
-					qrData = &QrData{ContentType: "image/png", Base64: encoded}
-					user.Status = "awaiting_qr"
-					u.sessionRepo.Upsert(user)
-					u.clientManager.CacheQR(request.AgentID, qrData.ContentType, qrData.Base64)
-				}
-			case <-time.After(5 * time.Second):
-				// Timeout waiting for QR
-			}
+			user.Status = "awaiting_qr"
+			u.sessionRepo.Upsert(user)
 		} else {
 			// Has session, just connect
 			client.Connect()
@@ -203,33 +249,31 @@ func (u *SessionUsecase) GetQR(agentID string) (*GetQRResponse, error) {
 		return nil, errors.New("session already logged in")
 	}
 
+	ctx := context.Background()
+
 	if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
 		return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
 	}
 
-	ctx := context.Background()
-	qrChan, err := client.GetQRChannel(ctx)
+	// If connected but waiting for scan, QR emitter is already running; wait for cache to update
+	if client.IsConnected() && !client.IsLoggedIn() {
+		logrus.Debugf("QR already emitting for agent %s; waiting for next cached code", agentID)
+		// short wait loop for refreshed cache (e.g., rotate every ~15s)
+		for i := 0; i < 4; i++ {
+			time.Sleep(5 * time.Second)
+			if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
+				return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
+			}
+		}
+		return nil, errors.New("qr not ready; retry shortly while device is emitting QR")
+	}
+
+	// Not connected and no cache: start QR flow
+	qr, err := u.listenAndCacheQR(ctx, client, agentID)
 	if err != nil {
 		return nil, err
 	}
-
-	if !client.IsConnected() {
-		_ = client.Connect()
-	}
-
-	select {
-	case evt := <-qrChan:
-		if evt.Event != "code" {
-			return nil, errors.New("qr not available")
-		}
-		png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
-		encoded := base64.StdEncoding.EncodeToString(png)
-		qr := QrData{ContentType: "image/png", Base64: encoded}
-		u.clientManager.CacheQR(agentID, qr.ContentType, qr.Base64)
-		return &GetQRResponse{Qr: qr, QrUpdatedAt: time.Now()}, nil
-	case <-time.After(60 * time.Second):
-		return nil, errors.New("qr timeout")
-	}
+	return &GetQRResponse{Qr: *qr, QrUpdatedAt: time.Now()}, nil
 }
 
 func (u *SessionUsecase) getCachedQR(agentID string) *QrData {

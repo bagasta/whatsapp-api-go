@@ -415,8 +415,12 @@ func initApp() {
 		// Resolve client & self JID for mention detection
 		client := clientManager.GetClient(agentID)
 		selfJID := ""
+		selfAltJID := ""
 		if client != nil && client.Store != nil && client.Store.ID != nil {
 			selfJID = client.Store.ID.String()
+			if alt, err := client.Store.GetAltJID(ctx, *client.Store.ID); err == nil && alt.String() != "" {
+				selfAltJID = alt.String()
+			}
 		}
 
 		// Extract human text
@@ -476,12 +480,11 @@ func initApp() {
 				selfUser = j.User
 				selfPhone = strings.TrimPrefix(j.User, "+")
 			}
-			mentioned := isMentioned(evt.Message, selfJID)
+			mentioned := isMentioned(evt.Message, selfJID) || isMentioned(evt.Message, selfAltJID)
 			containsSelf := selfUser != "" && strings.Contains(text, selfUser)
 			containsPhone := selfPhone != "" && strings.Contains(text, selfPhone)
 			repliesToBot := isReplyToSelf(evt.Message, selfJID)
-			hasAnyMention := len(collectMentioned(evt.Message)) > 0
-			if !mentioned && !containsSelf && !containsPhone && !repliesToBot && !hasAnyMention {
+			if !mentioned && !containsSelf && !containsPhone && !repliesToBot {
 				logrus.Debugf("Auto-forward AI skipped (group, no mention): agent=%s chat=%s self=%s text=%q", agentID, chatJID, selfUser, text)
 				return
 			}
@@ -603,20 +606,6 @@ func phoneDigits(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// collectMentioned returns mentioned JIDs from ExtendedText context info.
-func collectMentioned(msg *waE2E.Message) []string {
-	inner := unwrapMessage(msg)
-	if inner == nil {
-		return nil
-	}
-	if ext := inner.GetExtendedTextMessage(); ext != nil {
-		if ci := ext.GetContextInfo(); ci != nil {
-			return ci.GetMentionedJID()
-		}
-	}
-	return nil
 }
 
 // isReplyToSelf checks if the message quotes a message from selfJID.

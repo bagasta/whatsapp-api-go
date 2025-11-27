@@ -10,9 +10,11 @@ import (
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -100,6 +102,21 @@ func (cm *ClientManager) CreateClient(ctx context.Context, agentID string) (*wha
 
 	// Add Event Handler
 	client.AddEventHandler(func(rawEvt interface{}) {
+		// Recover from pairing failures caused by a corrupted store (e.g., FK constraint errors)
+		if pairErr, ok := rawEvt.(*events.PairError); ok {
+			if pairErr.Error != nil {
+				logrus.Errorf("Pairing failed for agent %s: %v", agentID, pairErr.Error)
+			} else {
+				logrus.Errorf("Pairing failed for agent %s with unknown error", agentID)
+			}
+
+			// Reset the client + per-agent DB so the next QR attempt starts clean
+			if err := cm.DeleteClient(agentID); err != nil {
+				logrus.Warnf("Failed to reset client after pair error for agent %s: %v", agentID, err)
+			}
+			return
+		}
+
 		// include agentID to avoid cross-agent conflicts and enable per-agent hooks
 		handler(ctx, rawEvt, cm.chatStorage, agentID, client)
 	})
