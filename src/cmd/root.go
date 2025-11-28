@@ -385,6 +385,7 @@ func initApp() {
 
 	// Initialize ClientManager for multi-agent support
 	clientManager = whatsapp.NewClientManager(chatStorageRepo)
+	whatsapp.SetClientManager(clientManager)
 
 	// Initialize repositories
 	sessionRepo = *repository.NewSessionRepository(chatStorageDB).(*repository.SessionRepository)
@@ -393,7 +394,7 @@ func initApp() {
 	// Usecase
 	appUsecase = usecase.NewAppService(chatStorageRepo)
 	chatUsecase = usecase.NewChatService(chatStorageRepo)
-	sendUsecase = usecase.NewSendService(appUsecase, chatStorageRepo)
+	sendUsecase = usecase.NewSendService(appUsecase, chatStorageRepo, clientManager)
 	userUsecase = usecase.NewUserService()
 	messageUsecase = usecase.NewMessageService(chatStorageRepo)
 	groupUsecase = usecase.NewGroupService()

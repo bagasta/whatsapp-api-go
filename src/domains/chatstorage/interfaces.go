@@ -9,6 +9,8 @@ import (
 )
 
 type IChatStorageRepository interface {
+	// Return agent-scoped repository. If agentID is empty, it falls back to legacy/global storage.
+	ForAgent(agentID string) IChatStorageRepository
 	// Chat operations
 	CreateMessage(ctx context.Context, evt *events.Message) error
 	StoreChat(chat *Chat) error

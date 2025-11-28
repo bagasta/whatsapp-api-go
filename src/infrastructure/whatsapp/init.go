@@ -452,6 +452,9 @@ func handleRemoteLogout(ctx context.Context, chatStorageRepo domainChatStorage.I
 
 // handler is the main event handler for WhatsApp events
 func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.IChatStorageRepository, agentID string, client *whatsmeow.Client) {
+	if chatStorageRepo != nil && agentID != "" {
+		chatStorageRepo = chatStorageRepo.ForAgent(agentID)
+	}
 	switch evt := rawEvt.(type) {
 	case *events.DeleteForMe:
 		handleDeleteForMe(ctx, agentID, evt, chatStorageRepo)

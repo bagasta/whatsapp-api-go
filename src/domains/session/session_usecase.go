@@ -23,6 +23,39 @@ type SessionUsecase struct {
 	clientManager *whatsapp.ClientManager
 }
 
+var ErrQRNotReady = errors.New("qr not ready; retry shortly while device is emitting QR")
+
+// fetchNextQR tries to subscribe to the QR channel and return the next code quickly without
+// tearing down the existing connection. Useful when the client is connected but cache is empty.
+func (u *SessionUsecase) fetchNextQR(ctx context.Context, client *whatsmeow.Client, agentID string) (*QrData, error) {
+	qrCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	qrChan, err := client.GetQRChannel(qrCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		select {
+		case evt, ok := <-qrChan:
+			if !ok {
+				return nil, ErrQRNotReady
+			}
+			if evt.Event != "code" {
+				continue
+			}
+			png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+			encoded := base64.StdEncoding.EncodeToString(png)
+			qr := &QrData{ContentType: "image/png", Base64: encoded}
+			u.clientManager.CacheQR(agentID, qr.ContentType, qr.Base64)
+			return qr, nil
+		case <-qrCtx.Done():
+			return nil, ErrQRNotReady
+		}
+	}
+}
+
 func NewSessionUsecase(sessionRepo ISessionRepository, apiKeyRepo apikey.IApiKeyRepository, clientManager *whatsapp.ClientManager) ISessionUsecase {
 	return &SessionUsecase{
 		sessionRepo:   sessionRepo,
@@ -259,13 +292,18 @@ func (u *SessionUsecase) GetQR(agentID string) (*GetQRResponse, error) {
 	if client.IsConnected() && !client.IsLoggedIn() {
 		logrus.Debugf("QR already emitting for agent %s; waiting for next cached code", agentID)
 		// short wait loop for refreshed cache (e.g., rotate every ~15s)
-		for i := 0; i < 4; i++ {
-			time.Sleep(5 * time.Second)
+		for i := 0; i < 3; i++ {
+			time.Sleep(3 * time.Second)
 			if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
 				return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
 			}
 		}
-		return nil, errors.New("qr not ready; retry shortly while device is emitting QR")
+		// still empty: subscribe again to get a fresh code without disconnecting
+		qr, err := u.fetchNextQR(ctx, client, agentID)
+		if err != nil {
+			return nil, err
+		}
+		return &GetQRResponse{Qr: *qr, QrUpdatedAt: time.Now()}, nil
 	}
 
 	// Not connected and no cache: start QR flow

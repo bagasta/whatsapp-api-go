@@ -19,6 +19,7 @@ import (
 type SQLiteRepository struct {
 	db         *sql.DB
 	isPostgres bool
+	agentID    string
 }
 
 // helper to rebind placeholders when using Postgres
@@ -56,6 +57,18 @@ func (r *SQLiteRepository) txQueryRow(tx *sql.Tx, query string, args ...any) *sq
 // NewSQLiteRepository creates a new SQLite repository
 func NewStorageRepository(db *sql.DB, isPostgres bool) domainChatStorage.IChatStorageRepository {
 	return &SQLiteRepository{db: db, isPostgres: isPostgres}
+}
+
+// ForAgent returns a lightweight copy of the repository scoped to an agent.
+func (r *SQLiteRepository) ForAgent(agentID string) domainChatStorage.IChatStorageRepository {
+	if agentID == "" {
+		return r
+	}
+	return &SQLiteRepository{
+		db:         r.db,
+		isPostgres: r.isPostgres,
+		agentID:    agentID,
+	}
 }
 
 // StoreChat creates or updates a chat

@@ -10,6 +10,19 @@ type Message struct {
 	Service domainMessage.IMessageUsecase
 }
 
+func readAgentID(c *fiber.Ctx, current string) string {
+	if current != "" {
+		return current
+	}
+	if headerVal := c.Get("X-Agent-ID"); headerVal != "" {
+		return headerVal
+	}
+	if queryVal := c.Query("agent_id"); queryVal != "" {
+		return queryVal
+	}
+	return current
+}
+
 func InitRestMessage(app fiber.Router, service domainMessage.IMessageUsecase) Message {
 	rest := Message{Service: service}
 
@@ -31,6 +44,7 @@ func (controller *Message) RevokeMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.RevokeMessage(c.UserContext(), request)
@@ -50,6 +64,7 @@ func (controller *Message) DeleteMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	err = controller.Service.DeleteMessage(c.UserContext(), request)
@@ -69,6 +84,7 @@ func (controller *Message) UpdateMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.UpdateMessage(c.UserContext(), request)
@@ -88,6 +104,7 @@ func (controller *Message) ReactMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.ReactMessage(c.UserContext(), request)
@@ -107,6 +124,7 @@ func (controller *Message) MarkAsRead(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.MarkAsRead(c.UserContext(), request)
@@ -126,6 +144,7 @@ func (controller *Message) StarMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 	request.IsStarred = true
 
@@ -146,6 +165,7 @@ func (controller *Message) UnstarMessage(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.MessageID = c.Params("message_id")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 	request.IsStarred = false
 	err = controller.Service.StarMessage(c.UserContext(), request)
@@ -164,6 +184,7 @@ func (controller *Message) DownloadMedia(c *fiber.Ctx) error {
 
 	request.MessageID = c.Params("message_id")
 	request.Phone = c.Query("phone")
+	request.AgentID = readAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.DownloadMedia(c.UserContext(), request)

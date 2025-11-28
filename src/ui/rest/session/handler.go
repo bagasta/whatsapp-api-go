@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	"github.com/gofiber/fiber/v2"
 	"io"
@@ -173,7 +174,13 @@ func (h *Handler) GetQR(c *fiber.Ctx) error {
 		msg := err.Error()
 		code := "INTERNAL_ERROR"
 		status := 500
-		if strings.Contains(strings.ToLower(msg), "not found") {
+		if errors.Is(err, session.ErrQRNotReady) {
+			code = "QR_NOT_READY"
+			status = fiber.StatusTooEarly
+		} else if strings.Contains(strings.ToLower(msg), "not ready") {
+			code = "QR_NOT_READY"
+			status = fiber.StatusTooEarly
+		} else if strings.Contains(strings.ToLower(msg), "not found") {
 			code = "SESSION_NOT_FOUND"
 			status = 404
 		} else if strings.Contains(strings.ToLower(msg), "already logged in") {

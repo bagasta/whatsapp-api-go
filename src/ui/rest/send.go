@@ -10,6 +10,19 @@ type Send struct {
 	Service domainSend.ISendUsecase
 }
 
+func applyAgentID(c *fiber.Ctx, current string) string {
+	if current != "" {
+		return current
+	}
+	if headerVal := c.Get("X-Agent-ID"); headerVal != "" {
+		return headerVal
+	}
+	if queryVal := c.Query("agent_id"); queryVal != "" {
+		return queryVal
+	}
+	return current
+}
+
 func InitRestSend(app fiber.Router, service domainSend.ISendUsecase) Send {
 	rest := Send{Service: service}
 	app.Post("/send/message", rest.SendText)
@@ -32,6 +45,7 @@ func (controller *Send) SendText(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendText(c.UserContext(), request)
@@ -57,6 +71,7 @@ func (controller *Send) SendImage(c *fiber.Ctx) error {
 		request.Image = file
 	}
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendImage(c.UserContext(), request)
@@ -79,6 +94,7 @@ func (controller *Send) SendFile(c *fiber.Ctx) error {
 	utils.PanicIfNeeded(err)
 
 	request.File = file
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendFile(c.UserContext(), request)
@@ -102,6 +118,7 @@ func (controller *Send) SendVideo(c *fiber.Ctx) error {
 		request.Video = videoFile
 	}
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendVideo(c.UserContext(), request)
@@ -125,6 +142,7 @@ func (controller *Send) SendSticker(c *fiber.Ctx) error {
 		request.Sticker = stickerFile
 	}
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendSticker(c.UserContext(), request)
@@ -143,6 +161,7 @@ func (controller *Send) SendContact(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendContact(c.UserContext(), request)
@@ -161,6 +180,7 @@ func (controller *Send) SendLink(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendLink(c.UserContext(), request)
@@ -179,6 +199,7 @@ func (controller *Send) SendLocation(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendLocation(c.UserContext(), request)
@@ -202,6 +223,7 @@ func (controller *Send) SendAudio(c *fiber.Ctx) error {
 		request.Audio = audioFile
 	}
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendAudio(c.UserContext(), request)
@@ -220,6 +242,7 @@ func (controller *Send) SendPoll(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendPoll(c.UserContext(), request)
@@ -238,6 +261,7 @@ func (controller *Send) SendPresence(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	response, err := controller.Service.SendPresence(c.UserContext(), request)
 	utils.PanicIfNeeded(err)
 
@@ -254,6 +278,7 @@ func (controller *Send) SendChatPresence(c *fiber.Ctx) error {
 	err := c.BodyParser(&request)
 	utils.PanicIfNeeded(err)
 
+	request.AgentID = applyAgentID(c, request.AgentID)
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendChatPresence(c.UserContext(), request)
