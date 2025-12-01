@@ -67,4 +67,5 @@ type ISessionUsecase interface {
 	DeleteSession(agentID string) error
 	ReconnectSession(agentID string) (*CreateSessionResponse, error)
 	GetQR(agentID string) (*GetQRResponse, error)
+	ListSessions() ([]*WhatsappUser, error)
 }

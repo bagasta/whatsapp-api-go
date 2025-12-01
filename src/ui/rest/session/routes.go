@@ -9,6 +9,7 @@ func InitRoutes(app fiber.Router, usecase session.ISessionUsecase) {
 	handler := NewHandler(usecase)
 
 	// Session management routes
+	app.Get("/sessions", handler.ListSessions)
 	app.Post("/sessions", handler.CreateSession)
 	app.Get("/sessions/:agentId", handler.GetSession)
 	app.Delete("/sessions/:agentId", handler.DeleteSession)

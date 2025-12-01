@@ -317,3 +317,7 @@ func (u *SessionUsecase) getCachedQR(agentID string) *QrData {
 	}
 	return nil
 }
+
+func (u *SessionUsecase) ListSessions() ([]*WhatsappUser, error) {
+	return u.sessionRepo.List()
+}

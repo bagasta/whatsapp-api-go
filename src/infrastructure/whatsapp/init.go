@@ -48,12 +48,19 @@ var (
 
 	// Optional callback to auto-forward inbound messages to AI per agent
 	agentForwarder func(agentID string, evt *events.Message)
+	// Optional callback to update session status
+	statusUpdater func(agentID string, status string)
 )
 
 // SetAgentForwarder registers a callback that will be called for inbound messages
 // for a given agentID (only available when using ClientManager).
 func SetAgentForwarder(fn func(agentID string, evt *events.Message)) {
 	agentForwarder = fn
+}
+
+// SetStatusUpdater registers a callback that will be called when session status changes
+func SetStatusUpdater(fn func(agentID string, status string)) {
+	statusUpdater = fn
 }
 
 // InitWaDB initializes the WhatsApp database connection
@@ -461,11 +468,11 @@ func handler(ctx context.Context, rawEvt any, chatStorageRepo domainChatStorage.
 	case *events.AppStateSyncComplete:
 		handleAppStateSyncComplete(ctx, evt)
 	case *events.PairSuccess:
-		handlePairSuccess(ctx, evt)
+		handlePairSuccess(ctx, agentID, evt)
 	case *events.LoggedOut:
-		handleLoggedOut(ctx, chatStorageRepo)
+		handleLoggedOut(ctx, chatStorageRepo, agentID)
 	case *events.Connected, *events.PushNameSetting:
-		handleConnectionEvents(ctx)
+		handleConnectionEvents(ctx, agentID)
 	case *events.StreamReplaced:
 		handleStreamReplaced(ctx)
 	case *events.Message:
@@ -525,15 +532,18 @@ func handleAppStateSyncComplete(_ context.Context, evt *events.AppStateSyncCompl
 	}
 }
 
-func handlePairSuccess(ctx context.Context, evt *events.PairSuccess) {
+func handlePairSuccess(ctx context.Context, agentID string, evt *events.PairSuccess) {
 	websocket.Broadcast <- websocket.BroadcastMessage{
 		Code:    "LOGIN_SUCCESS",
 		Message: fmt.Sprintf("Successfully pair with %s", evt.ID.String()),
 	}
 	syncKeysDevice(ctx, db, keysDB)
+	if statusUpdater != nil && agentID != "" {
+		statusUpdater(agentID, "authenticated")
+	}
 }
 
-func handleLoggedOut(ctx context.Context, chatStorageRepo domainChatStorage.IChatStorageRepository) {
+func handleLoggedOut(ctx context.Context, chatStorageRepo domainChatStorage.IChatStorageRepository, agentID string) {
 	logrus.Warn("[REMOTE_LOGOUT] Received LoggedOut event - user logged out from phone")
 
 	// Perform comprehensive cleanup
@@ -545,9 +555,13 @@ func handleLoggedOut(ctx context.Context, chatStorageRepo domainChatStorage.ICha
 		Message: "Remote logout cleanup completed - ready for new login",
 		Result:  nil,
 	}
+
+	if statusUpdater != nil && agentID != "" {
+		statusUpdater(agentID, "disconnected")
+	}
 }
 
-func handleConnectionEvents(_ context.Context) {
+func handleConnectionEvents(_ context.Context, agentID string) {
 	if len(cli.Store.PushName) == 0 {
 		return
 	}
@@ -558,6 +572,10 @@ func handleConnectionEvents(_ context.Context) {
 		log.Warnf("Failed to send available presence: %v", err)
 	} else {
 		log.Infof("Marked self as available")
+	}
+
+	if statusUpdater != nil && agentID != "" {
+		statusUpdater(agentID, "connected")
 	}
 }
 

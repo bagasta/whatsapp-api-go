@@ -3,10 +3,12 @@ package session
 import (
 	"encoding/json"
 	"errors"
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
-	"github.com/gofiber/fiber/v2"
 	"io"
 	"strings"
+
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
+	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
 )
 
 type Handler struct {
@@ -194,6 +196,24 @@ func (h *Handler) GetQR(c *fiber.Ctx) error {
 			},
 		})
 	}
+
+	return c.JSON(resp)
+}
+
+// GET /sessions
+func (h *Handler) ListSessions(c *fiber.Ctx) error {
+	logrus.Info("ListSessions handler called")
+	resp, err := h.usecase.ListSessions()
+	if err != nil {
+		logrus.Error("ListSessions error: ", err)
+		return c.Status(500).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "INTERNAL_ERROR",
+				"message": err.Error(),
+			},
+		})
+	}
+	logrus.Infof("ListSessions found %d sessions", len(resp))
 
 	return c.JSON(resp)
 }

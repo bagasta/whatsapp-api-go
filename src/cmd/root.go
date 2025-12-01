@@ -90,6 +90,15 @@ func reconnectExistingSessions(ctx context.Context, cm *whatsapp.ClientManager, 
 				logrus.Warnf("auto-reconnect: create client failed for agent %s: %v", agent, err)
 				return
 			}
+
+			// Only connect if we have a valid session (logged in)
+			// If not logged in, we shouldn't connect automatically, as that consumes the first QR code
+			// without anyone listening. The user should call /qr endpoint to initiate connection + QR listening.
+			if client.Store.ID == nil {
+				logrus.Infof("auto-reconnect: agent %s not logged in, skipping auto-connect", agent)
+				return
+			}
+
 			if client.IsConnected() {
 				return
 			}
@@ -395,6 +404,32 @@ func initApp() {
 	sessionRepo = *repository.NewSessionRepository(chatStorageDB).(*repository.SessionRepository)
 	apiKeyRepo = *repository.NewApiKeyRepository(chatStorageDB).(*repository.ApiKeyRepository)
 	dashboardRepo = *repository.NewDashboardRepository(chatStorageDB).(*repository.DashboardRepository)
+
+	whatsapp.SetStatusUpdater(func(agentID string, status string) {
+		user, err := sessionRepo.FindByAgentID(agentID)
+		if err != nil {
+			logrus.Warnf("StatusUpdater: session lookup failed for agent %s: %v", agentID, err)
+			return
+		}
+		if user == nil {
+			logrus.Warnf("StatusUpdater: session not found for agent %s", agentID)
+			return
+		}
+
+		user.Status = status
+		now := time.Now()
+		if status == "connected" || status == "authenticated" {
+			user.LastConnectedAt = &now
+		} else if status == "disconnected" {
+			user.LastDisconnectedAt = &now
+		}
+
+		if err := sessionRepo.Upsert(user); err != nil {
+			logrus.Warnf("StatusUpdater: failed to update status for agent %s: %v", agentID, err)
+		} else {
+			logrus.Infof("StatusUpdater: agent %s status updated to %s", agentID, status)
+		}
+	})
 
 	// Usecase
 	appUsecase = usecase.NewAppService(chatStorageRepo)
