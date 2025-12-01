@@ -11,6 +11,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/admin"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/agent"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/dashboard"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/session"
@@ -133,6 +134,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	// New API-OLD compatible routes
 	session.InitRoutes(apiGroup, sessionUsecase)
 	agent.InitRoutes(apiGroup, agentUsecase)
+	dashboard.InitRoutes(apiGroup, dashboardUsecase)
 
 	apiGroup.Get("/", func(c *fiber.Ctx) error {
 		return c.Render("views/index", fiber.Map{

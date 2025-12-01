@@ -291,14 +291,11 @@ func (u *SessionUsecase) GetQR(agentID string) (*GetQRResponse, error) {
 	// If connected but waiting for scan, QR emitter is already running; wait for cache to update
 	if client.IsConnected() && !client.IsLoggedIn() {
 		logrus.Debugf("QR already emitting for agent %s; waiting for next cached code", agentID)
-		// short wait loop for refreshed cache (e.g., rotate every ~15s)
-		for i := 0; i < 3; i++ {
-			time.Sleep(3 * time.Second)
-			if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
-				return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
-			}
+		// Return immediately if cache has something
+		if ct, b64, ok, ts := u.clientManager.GetCachedQR(agentID); ok {
+			return &GetQRResponse{Qr: QrData{ContentType: ct, Base64: b64}, QrUpdatedAt: ts}, nil
 		}
-		// still empty: subscribe again to get a fresh code without disconnecting
+		// No cache: subscribe briefly to get the next QR; fail fast if none appears
 		qr, err := u.fetchNextQR(ctx, client, agentID)
 		if err != nil {
 			return nil, err

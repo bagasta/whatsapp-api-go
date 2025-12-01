@@ -18,6 +18,7 @@ import (
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/dashboard"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/session"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/metrics"
@@ -33,6 +34,7 @@ import (
 type AgentUsecase struct {
 	sessionRepo   session.ISessionRepository
 	apiKeyRepo    apikey.IApiKeyRepository
+	dashboardRepo dashboard.IDashboardRepository
 	clientManager *whatsapp.ClientManager
 	httpClient    *http.Client
 
@@ -45,10 +47,11 @@ type agentLimiter struct {
 	queue   chan struct{}
 }
 
-func NewAgentUsecase(sessionRepo session.ISessionRepository, apiKeyRepo apikey.IApiKeyRepository, clientManager *whatsapp.ClientManager) IAgentUsecase {
+func NewAgentUsecase(sessionRepo session.ISessionRepository, apiKeyRepo apikey.IApiKeyRepository, dashboardRepo dashboard.IDashboardRepository, clientManager *whatsapp.ClientManager) IAgentUsecase {
 	return &AgentUsecase{
 		sessionRepo:   sessionRepo,
 		apiKeyRepo:    apiKeyRepo,
+		dashboardRepo: dashboardRepo,
 		clientManager: clientManager,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
@@ -138,6 +141,10 @@ func (u *AgentUsecase) ExecuteRun(agentID, apiKey string, request RunRequest) (*
 			logrus.Errorf("[%s] Failed to send reply: %v", traceID, err)
 		} else {
 			replySent = true
+			// Log success to dashboard analytics
+			if err := u.dashboardRepo.LogAiMessage(agentID, traceID, userID, "success"); err != nil {
+				logrus.Warnf("[%s] Failed to log AI message: %v", traceID, err)
+			}
 		}
 	}
 

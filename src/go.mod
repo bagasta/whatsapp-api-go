@@ -13,6 +13,7 @@ require (
 	github.com/gofiber/template/html/v2 v2.1.3
 	github.com/gofiber/websocket/v2 v2.2.1
 	github.com/google/uuid v1.6.0
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
 	github.com/mark3labs/mcp-go v0.43.0
 	github.com/mattn/go-sqlite3 v1.14.32
@@ -25,6 +26,7 @@ require (
 	go.mau.fi/libsignal v0.2.1
 	go.mau.fi/whatsmeow v0.0.0-20251116104239-3aca43070cd4
 	golang.org/x/image v0.33.0
+	golang.org/x/time v0.5.0
 	google.golang.org/protobuf v1.36.10
 )
 
@@ -46,7 +48,6 @@ require (
 	github.com/gofiber/utils v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
-	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
@@ -76,6 +77,5 @@ require (
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

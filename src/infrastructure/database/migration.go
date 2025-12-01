@@ -46,6 +46,14 @@ func Migrate(db *sql.DB, driverName string) error {
 				secret VARCHAR(255),
 				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			);`,
+			`CREATE TABLE IF NOT EXISTS ai_message_logs (
+				id SERIAL PRIMARY KEY,
+				agent_id VARCHAR(255) NOT NULL,
+				message_id VARCHAR(255),
+				user_id VARCHAR(255),
+				status VARCHAR(50),
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);`,
 		}
 	} else {
 		// SQLite syntax (TIMESTAMP -> DATETIME, etc if needed, but simplified here)
@@ -80,6 +88,14 @@ func Migrate(db *sql.DB, driverName string) error {
 				url TEXT NOT NULL,
 				secret TEXT,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE TABLE IF NOT EXISTS ai_message_logs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				agent_id TEXT NOT NULL,
+				message_id TEXT,
+				user_id TEXT,
+				status TEXT,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			);`,
 		}
 	}

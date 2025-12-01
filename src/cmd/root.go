@@ -16,6 +16,7 @@ import (
 	domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
 	domainChat "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chat"
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	domainDashboard "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/dashboard"
 	domainGroup "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/group"
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
@@ -29,6 +30,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
+	usecaseDashboard "github.com/aldinokemal/go-whatsapp-web-multidevice/usecase/dashboard"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
@@ -53,9 +55,10 @@ var (
 	chatStorageRepo domainChatStorage.IChatStorageRepository
 
 	// Repositories
-	sessionRepo repository.SessionRepository
-	apiKeyRepo  repository.ApiKeyRepository
-	webhookRepo repository.WebhookConfigRepository
+	sessionRepo   repository.SessionRepository
+	apiKeyRepo    repository.ApiKeyRepository
+	webhookRepo   repository.WebhookConfigRepository
+	dashboardRepo repository.DashboardRepository
 
 	// Usecase
 	appUsecase        domainApp.IAppUsecase
@@ -68,6 +71,7 @@ var (
 	sessionUsecase    domainSession.ISessionUsecase
 	agentUsecase      domainAgent.IAgentUsecase
 	webhookUsecase    domainWebhook.IWebhookConfigUsecase
+	dashboardUsecase  domainDashboard.IDashboardUsecase
 )
 
 // reconnectExistingSessions initializes clients for all stored sessions and attempts to connect them.
@@ -390,6 +394,7 @@ func initApp() {
 	// Initialize repositories
 	sessionRepo = *repository.NewSessionRepository(chatStorageDB).(*repository.SessionRepository)
 	apiKeyRepo = *repository.NewApiKeyRepository(chatStorageDB).(*repository.ApiKeyRepository)
+	dashboardRepo = *repository.NewDashboardRepository(chatStorageDB).(*repository.DashboardRepository)
 
 	// Usecase
 	appUsecase = usecase.NewAppService(chatStorageRepo)
@@ -400,7 +405,8 @@ func initApp() {
 	groupUsecase = usecase.NewGroupService()
 	newsletterUsecase = usecase.NewNewsletterService()
 	sessionUsecase = domainSession.NewSessionUsecase(&sessionRepo, &apiKeyRepo, clientManager)
-	agentUsecase = domainAgent.NewAgentUsecase(&sessionRepo, &apiKeyRepo, clientManager)
+	agentUsecase = domainAgent.NewAgentUsecase(&sessionRepo, &apiKeyRepo, &dashboardRepo, clientManager)
+	dashboardUsecase = usecaseDashboard.NewDashboardUsecase(&dashboardRepo, &sessionRepo)
 
 	// Auto-reconnect previously saved sessions
 	reconnectExistingSessions(ctx, clientManager, &sessionRepo)
